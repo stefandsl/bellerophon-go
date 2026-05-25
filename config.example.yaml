@@ -1,0 +1,45 @@
+sip:
+  server: "sip.example.local"
+  username: "1001"
+  password: "change-me"
+  display_name: "Bellerophon"
+  transport: "udp"
+  local_bind: "0.0.0.0:5060"
+  registration_expiry_seconds: 300
+
+rtp:
+  local_ip: "0.0.0.0"
+  port_min: 40000
+  port_max: 40100
+  preferred_codec: "pcmu"
+  packet_duration_ms: 20
+
+vad:
+  enabled: true
+  energy_threshold: 500
+  min_speech_ms: 300
+  silence_end_ms: 900
+  max_utterance_ms: 15000
+  pre_roll_ms: 300
+
+stt:
+  provider: "whisper"
+  endpoint: "https://api.openai.com/v1/audio/transcriptions"
+  api_key_env: "OPENAI_API_KEY"
+  model: "whisper-1"
+
+claude:
+  endpoint: "http://localhost:3000/message"
+  timeout_seconds: 120
+
+tts:
+  provider: "elevenlabs"
+  api_key_env: "ELEVENLABS_API_KEY"
+  voice_id: "replace-me"
+  model_id: "eleven_multilingual_v2"
+  output_format: "pcm_8000"
+
+debug:
+  log_level: "info"
+  save_wav: false
+  wav_dir: "./debug-audio"

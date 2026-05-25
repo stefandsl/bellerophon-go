@@ -1,0 +1,11 @@
+/bellerophon
+/bellerophon-*
+*.exe
+*.test
+*.out
+/dist/
+/debug-audio/
+/.idea/
+/.vscode/
+.DS_Store
+*.log
