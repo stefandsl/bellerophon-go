@@ -21,12 +21,6 @@ func (t *callTable) put(id string, c *Call) {
 	t.m[id] = c
 }
 
-func (t *callTable) get(id string) *Call {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.m[id]
-}
-
 func (t *callTable) drop(id string) *Call {
 	t.mu.Lock()
 	defer t.mu.Unlock()

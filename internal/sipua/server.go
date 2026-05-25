@@ -42,12 +42,8 @@ type Server struct {
 
 	inviteHandler InviteHandler
 
-	mu          sync.Mutex
-	registered  bool
-	regCallID   string
-	regCSeq     uint32
-	regContact  string
-	regChalNone bool // true once we've used the challenge once
+	mu         sync.Mutex
+	registered bool
 
 	stopRefresh chan struct{}
 	wg          sync.WaitGroup
