@@ -1,45 +1,29 @@
+# Bellerophon Go config — see docs/M001-CONTEXT.md §2 for the full field
+# table (Go field ↔ YAML key ↔ env var ↔ CLI flag).
+#
+# Required: sip.{domain,registrar,extension,auth_password}, rtp.external_ip.
+# Everything else has a sensible default.
+
 sip:
-  server: "sip.example.local"
-  username: "1001"
-  password: "change-me"
-  display_name: "Bellerophon"
-  transport: "udp"
-  local_bind: "0.0.0.0:5060"
-  registration_expiry_seconds: 300
+  domain: "sip.example.local"          # SIP_DOMAIN
+  registrar: "10.0.0.50"               # SIP_REGISTRAR
+  registrar_port: 5060                 # SIP_REGISTRAR_PORT (default 5060)
+  extension: "1001"                    # SIP_EXTENSION
+  auth_username: ""                    # SIP_AUTH_USERNAME (defaults to extension)
+  auth_id: ""                          # SIP_AUTH_ID
+  auth_password: "change-me"           # SIP_PASSWORD
+  expiry: 300                          # SIP_EXPIRY (seconds)
 
 rtp:
-  local_ip: "0.0.0.0"
-  port_min: 40000
-  port_max: 40100
-  preferred_codec: "pcmu"
-  packet_duration_ms: 20
+  external_ip: "10.0.0.100"            # EXTERNAL_IP — must reach the caller's RTP
+  port_range: "30000-30100"            # RTP_PORT_RANGE — avoid 3CX SBC's 20000-20099
 
-vad:
-  enabled: true
-  energy_threshold: 500
-  min_speech_ms: 300
-  silence_end_ms: 900
-  max_utterance_ms: 15000
-  pre_roll_ms: 300
+http:
+  port: 3000                           # HTTP_PORT (0 disables admin HTTP)
+  tls_port: 0                          # TLS_PORT (0 disables HTTPS)
+  tls_cert: ""                         # TLS_CERT_FILE — required iff tls_port > 0
+  tls_key: ""                          # TLS_KEY_FILE  — required iff tls_port > 0
 
-stt:
-  provider: "whisper"
-  endpoint: "https://api.openai.com/v1/audio/transcriptions"
-  api_key_env: "OPENAI_API_KEY"
-  model: "whisper-1"
-
-claude:
-  endpoint: "http://localhost:3000/message"
-  timeout_seconds: 120
-
-tts:
-  provider: "elevenlabs"
-  api_key_env: "ELEVENLABS_API_KEY"
-  voice_id: "replace-me"
-  model_id: "eleven_multilingual_v2"
-  output_format: "pcm_8000"
-
-debug:
-  log_level: "info"
-  save_wav: false
-  wav_dir: "./debug-audio"
+logging:
+  level: "info"                        # LOG_LEVEL (debug|info|warn|error)
+  format: "text"                       # LOG_FORMAT (text|json)

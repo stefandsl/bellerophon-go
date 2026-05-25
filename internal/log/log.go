@@ -26,9 +26,11 @@ func (s *slogLogger) Warn(msg string, args ...any)  { s.l.Warn(msg, args...) }
 func (s *slogLogger) Error(msg string, args ...any) { s.l.Error(msg, args...) }
 func (s *slogLogger) With(args ...any) Logger       { return &slogLogger{l: s.l.With(args...)} }
 
-// New returns a Logger writing structured text to stderr at the given level.
-// Accepted level strings: debug, info, warn, error. Unknown values default to info.
-func New(level string) Logger {
+// New returns a Logger writing structured logs to stderr at the given level
+// and format. Accepted level strings: debug, info, warn, error (unknown
+// defaults to info). Accepted format strings: text, json (unknown defaults
+// to text).
+func New(level, format string) Logger {
 	var lvl slog.Level
 	switch strings.ToLower(level) {
 	case "debug":
@@ -40,6 +42,12 @@ func New(level string) Logger {
 	default:
 		lvl = slog.LevelInfo
 	}
-	h := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lvl})
+	opts := &slog.HandlerOptions{Level: lvl}
+	var h slog.Handler
+	if strings.ToLower(format) == "json" {
+		h = slog.NewJSONHandler(os.Stderr, opts)
+	} else {
+		h = slog.NewTextHandler(os.Stderr, opts)
+	}
 	return &slogLogger{l: slog.New(h)}
 }
