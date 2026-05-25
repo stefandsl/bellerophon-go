@@ -6,14 +6,7 @@ import (
 	"os"
 
 	"github.com/stefandsl/bellerophon-go/internal/config"
-	"github.com/stefandsl/bellerophon-go/internal/logging"
-)
-
-// Set via -ldflags at build time.
-var (
-	version   = "dev"
-	commit    = "none"
-	buildDate = "unknown"
+	bellog "github.com/stefandsl/bellerophon-go/internal/log"
 )
 
 func main() {
@@ -64,16 +57,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	log := logging.New(cfg.Debug.LogLevel)
+	logger := bellog.New(cfg.Debug.LogLevel)
 	for _, w := range warns {
-		log.Warn("config", "issue", w)
+		logger.Warn("config", "issue", w)
 	}
-	log.Info("config loaded",
+	logger.Info("config loaded",
 		"sip_server", cfg.SIP.Server,
 		"sip_user", cfg.SIP.Username,
 		"rtp_codec", cfg.RTP.PreferredCodec,
 	)
 
-	// Milestones 3+ wire the SIP / RTP / voice pipeline here.
-	log.Info("bellerophon skeleton ready; runtime pipeline not yet implemented")
+	// Slices S03+ wire the SIP / RTP / voice pipeline here.
+	logger.Info("bellerophon skeleton ready; runtime pipeline not yet implemented")
 }

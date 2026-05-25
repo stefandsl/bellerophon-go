@@ -3,6 +3,7 @@
 *.exe
 *.test
 *.out
+/bin/
 /dist/
 /debug-audio/
 /.idea/

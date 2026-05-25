@@ -1,0 +1,33 @@
+run:
+  timeout: 5m
+  go: "1.23"
+  tests: true
+
+linters:
+  disable-all: true
+  enable:
+    - govet
+    - errcheck
+    - staticcheck
+    - unused
+    - gofmt
+    - goimports
+    - gosec
+    - bodyclose
+
+linters-settings:
+  goimports:
+    local-prefixes: github.com/stefandsl/bellerophon-go
+  gosec:
+    excludes:
+      # G104 (errors not checked) overlaps with errcheck; let errcheck own it.
+      - G104
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - gosec
+    - path: internal/.*/doc\.go
+      linters:
+        - unused
