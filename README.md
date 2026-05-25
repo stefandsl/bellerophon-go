@@ -14,8 +14,17 @@ toolchains for end users.
 
 Early. This is the project skeleton — `cmd/bellerophon` boots, loads YAML
 config, validates it, and prints structured logs. The SIP/RTP/voice pipeline
-packages exist as placeholders and arrive in later milestones (see
-`docs/milestones.md`).
+packages exist as placeholders and arrive in later milestones.
+
+Roadmap (planning artifacts, copied from the v1 repo's `go-rewrite-proposal`
+branch):
+
+- [`docs/VISION.md`](docs/VISION.md) — multi-milestone vision M001 → M006,
+  architecture target, NFRs, hard constraints, risk register
+- [`docs/M001-SPEC.md`](docs/M001-SPEC.md) — SIP + media foundation (no AI),
+  7 slices S01–S07, ends in live 3CX UAT
+- [`docs/M002-DRAFT.md`](docs/M002-DRAFT.md) — pre-spec sketch for the inbound
+  AI conversation loop; has open questions to resolve before promotion
 
 ## Build
 
@@ -75,14 +84,14 @@ chmod +x bellerophon
 cmd/bellerophon/        # main; CLI, config load, log init
 internal/config/        # YAML schema + validation
 internal/logging/       # slog setup
-internal/sip/           # (M3) sipgo registration + call handling
-internal/rtp/           # (M5/M10) UDP RTP receive/send
-internal/audio/         # G.711 codec, WAV debug
-internal/vad/           # (M6) energy VAD + utterance buffering
-internal/stt/           # (M7) Whisper-compatible client
-internal/claude/        # (M8) HTTP client for the local Claude bridge
-internal/tts/           # (M9) ElevenLabs-compatible client
-internal/conversation/  # (M11) call-level state machine
+internal/sip/           # (M001 S03) sipgo REGISTER + INVITE handler
+internal/rtp/           # (M001 S04) UDP RTP transport + jitter + RTCP
+internal/audio/         # (M001 S05) G.711 codec + WAV playback
+internal/vad/           # (M002) energy VAD + utterance buffering
+internal/stt/           # (M002) Whisper-compatible client
+internal/claude/        # (M002) HTTP client for the local Claude bridge
+internal/tts/           # (M002) ElevenLabs-compatible client
+internal/conversation/  # (M002) call-level state machine
 docs/                   # plans and viewer-facing setup
 ```
 
