@@ -422,22 +422,22 @@ func TestLoad_EverySpecCovered(t *testing.T) {
 		t.Fatalf("load: %v", err)
 	}
 	checks := map[string]any{
-		"SIP.Domain":         cfg.SIP.Domain,
-		"SIP.Registrar":      cfg.SIP.Registrar,
-		"SIP.RegistrarPort":  cfg.SIP.RegistrarPort,
-		"SIP.Extension":      cfg.SIP.Extension,
-		"SIP.AuthUsername":   cfg.SIP.AuthUsername,
-		"SIP.AuthID":         cfg.SIP.AuthID,
-		"SIP.AuthPassword":   cfg.SIP.AuthPassword,
-		"SIP.Expiry":         cfg.SIP.Expiry,
-		"RTP.ExternalIP":     cfg.RTP.ExternalIP,
-		"RTP.PortRange":      cfg.RTP.PortRange,
-		"HTTP.Port":          cfg.HTTP.Port,
-		"HTTP.TLSPort":       cfg.HTTP.TLSPort,
-		"HTTP.TLSCert":       cfg.HTTP.TLSCert,
-		"HTTP.TLSKey":        cfg.HTTP.TLSKey,
-		"Logging.Level":      cfg.Logging.Level,
-		"Logging.Format":     cfg.Logging.Format,
+		"SIP.Domain":        cfg.SIP.Domain,
+		"SIP.Registrar":     cfg.SIP.Registrar,
+		"SIP.RegistrarPort": cfg.SIP.RegistrarPort,
+		"SIP.Extension":     cfg.SIP.Extension,
+		"SIP.AuthUsername":  cfg.SIP.AuthUsername,
+		"SIP.AuthID":        cfg.SIP.AuthID,
+		"SIP.AuthPassword":  cfg.SIP.AuthPassword,
+		"SIP.Expiry":        cfg.SIP.Expiry,
+		"RTP.ExternalIP":    cfg.RTP.ExternalIP,
+		"RTP.PortRange":     cfg.RTP.PortRange,
+		"HTTP.Port":         cfg.HTTP.Port,
+		"HTTP.TLSPort":      cfg.HTTP.TLSPort,
+		"HTTP.TLSCert":      cfg.HTTP.TLSCert,
+		"HTTP.TLSKey":       cfg.HTTP.TLSKey,
+		"Logging.Level":     cfg.Logging.Level,
+		"Logging.Format":    cfg.Logging.Format,
 	}
 	wantInt := map[string]int{"SIP.RegistrarPort": 5070, "SIP.Expiry": 60, "HTTP.Port": 8080, "HTTP.TLSPort": 8443}
 	for field, got := range checks {
