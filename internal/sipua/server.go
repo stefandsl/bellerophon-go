@@ -9,6 +9,8 @@ package sipua
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -42,12 +44,19 @@ type Server struct {
 
 	inviteHandler InviteHandler
 
-	mu          sync.Mutex
-	registered  bool
-	regCallID   string
-	regCSeq     uint32
-	regContact  string
-	regChalNone bool // true once we've used the challenge once
+	calls callTable
+
+	mu         sync.Mutex
+	registered bool
+	// Sticky registration state. RFC 3261 §10.2 requires REGISTER refreshes
+	// for the same address-of-record to use the same Call-ID with a
+	// monotonically increasing CSeq. We also cache the digest challenge so
+	// refreshes don't pay a 401 round-trip every cycle.
+	regCallID    string
+	regCSeq      uint32
+	regContact   string
+	regChal      *digest.Challenge
+	regChalCount int
 
 	stopRefresh chan struct{}
 	wg          sync.WaitGroup
@@ -107,7 +116,10 @@ func NewServer(cfg config.SIP, opts Options) (*Server, error) {
 		client:      client,
 		srv:         srv,
 		stopRefresh: make(chan struct{}),
+		regCallID:   randomCallID(),
+		regCSeq:     1,
 	}
+	s.regContact = s.contactURI()
 
 	// Use username as auth identity for log clarity.
 	s.logger = s.logger.With("extension", cfg.Extension, "auth_user", username)
@@ -170,6 +182,12 @@ func (s *Server) Run(ctx context.Context) error {
 func (s *Server) shutdown() {
 	close(s.stopRefresh)
 
+	// Tear down any in-flight calls before deregistering so the registrar
+	// sees us go offline cleanly and remote parties hear an immediate
+	// hangup rather than waiting for their own timeout. Best-effort,
+	// parallel, capped at 2s total.
+	s.byeActiveCalls(2 * time.Second)
+
 	// Best-effort unregister with Expires:0. Use a short timeout so a dead
 	// registrar can't pin us in shutdown forever.
 	uctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -182,6 +200,34 @@ func (s *Server) shutdown() {
 
 	_ = s.client.Close()
 	_ = s.srv.Close()
+}
+
+// byeActiveCalls walks the call table and sends BYE for each active call in
+// parallel, waiting up to total for all of them. Calls are dropped from the
+// table whether or not the BYE succeeds.
+func (s *Server) byeActiveCalls(total time.Duration) {
+	active := s.calls.snapshot()
+	if len(active) == 0 {
+		return
+	}
+	s.logger.Info("BYEing active calls on shutdown", "count", len(active))
+
+	ctx, cancel := context.WithTimeout(context.Background(), total)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	for _, c := range active {
+		wg.Add(1)
+		go func(c *Call) {
+			defer wg.Done()
+			if err := c.sendBye(ctx); err != nil {
+				s.logger.Warn("outbound BYE failed", "call_id", c.CallID, "error", err)
+			}
+			s.calls.drop(c.CallID)
+			c.fireBye()
+		}(c)
+	}
+	wg.Wait()
 }
 
 func (s *Server) refreshLoop(ctx context.Context) {
@@ -213,6 +259,10 @@ func (s *Server) refreshLoop(ctx context.Context) {
 
 // register sends a REGISTER request, transparently handling a 401 digest
 // challenge. expirySec=0 deregisters.
+//
+// All REGISTERs reuse Server.regCallID and a monotonic Server.regCSeq, and
+// reuse the cached digest challenge (Server.regChal) so refreshes don't pay
+// a 401 round-trip after the first successful auth.
 func (s *Server) register(ctx context.Context, expirySec int) error {
 	registrar := s.cfg.Registrar
 	if registrar == "" {
@@ -229,12 +279,32 @@ func (s *Server) register(ctx context.Context, expirySec int) error {
 		return fmt.Errorf("parse registrar uri: %w", err)
 	}
 
-	contact := s.contactURI()
+	// Build a REGISTER request with our sticky Call-ID and the next CSeq.
+	// sipgo's ClientRequestRegisterBuild will increment the CSeq once more
+	// before sending; we read the final value back to keep our counter in
+	// sync.
+	req, nextCSeq := s.buildRegisterRequest(recipient, expirySec)
 
-	req := sip.NewRequest(sip.REGISTER, recipient)
-	req.AppendHeader(sip.NewHeader("Contact", contact))
-	req.AppendHeader(sip.NewHeader("Expires", strconv.Itoa(expirySec)))
-	req.SetTransport("UDP")
+	username := s.cfg.AuthUsername
+	if username == "" {
+		username = s.cfg.Extension
+	}
+
+	// If we have a cached challenge from a prior 401, pre-attach the
+	// Authorization header so the registrar accepts on the first round.
+	s.mu.Lock()
+	chal := s.regChal
+	if chal != nil {
+		s.regChalCount++
+	}
+	chalCount := s.regChalCount
+	s.mu.Unlock()
+
+	if chal != nil {
+		if err := attachDigest(req, recipient, chal, chalCount, username, s.cfg.AuthPassword); err != nil {
+			s.logger.Warn("attach cached digest failed; falling back to challenge round-trip", "error", err)
+		}
+	}
 
 	tx, err := s.client.TransactionRequest(ctx, req, sipgo.ClientRequestRegisterBuild)
 	if err != nil {
@@ -247,6 +317,17 @@ func (s *Server) register(ctx context.Context, expirySec int) error {
 		return err
 	}
 
+	// Update sticky CSeq from what was actually sent.
+	if cs := req.CSeq(); cs != nil {
+		s.mu.Lock()
+		s.regCSeq = cs.SeqNo
+		s.mu.Unlock()
+	} else {
+		s.mu.Lock()
+		s.regCSeq = nextCSeq
+		s.mu.Unlock()
+	}
+
 	if res.StatusCode == 401 || res.StatusCode == 407 {
 		hdr := res.GetHeader("WWW-Authenticate")
 		if hdr == nil {
@@ -255,32 +336,25 @@ func (s *Server) register(ctx context.Context, expirySec int) error {
 		if hdr == nil {
 			return fmt.Errorf("auth required but no challenge header")
 		}
-		chal, err := digest.ParseChallenge(hdr.Value())
+		newChal, err := digest.ParseChallenge(hdr.Value())
 		if err != nil {
 			return fmt.Errorf("parse digest challenge: %w", err)
 		}
 
-		username := s.cfg.AuthUsername
-		if username == "" {
-			username = s.cfg.Extension
-		}
-		cred, err := digest.Digest(chal, digest.Options{
-			Method:   req.Method.String(),
-			URI:      recipient.Host,
-			Username: username,
-			Password: s.cfg.AuthPassword,
-		})
-		if err != nil {
-			return fmt.Errorf("compute digest: %w", err)
-		}
+		// Cache the new challenge; reset nonce-count.
+		s.mu.Lock()
+		s.regChal = newChal
+		s.regChalCount = 1
+		newCount := s.regChalCount
+		s.mu.Unlock()
 
 		newReq := req.Clone()
 		newReq.RemoveHeader("Via")
-		authHdr := "Authorization"
-		if res.StatusCode == 407 {
-			authHdr = "Proxy-Authorization"
+		newReq.RemoveHeader("Authorization")
+		newReq.RemoveHeader("Proxy-Authorization")
+		if err := attachDigestNamed(newReq, recipient, newChal, newCount, username, s.cfg.AuthPassword, res.StatusCode == 407); err != nil {
+			return fmt.Errorf("compute digest: %w", err)
 		}
-		newReq.AppendHeader(sip.NewHeader(authHdr, cred.String()))
 
 		tx2, err := s.client.TransactionRequest(ctx, newReq, sipgo.ClientRequestIncreaseCSEQ, sipgo.ClientRequestAddVia)
 		if err != nil {
@@ -291,6 +365,12 @@ func (s *Server) register(ctx context.Context, expirySec int) error {
 		if err != nil {
 			return err
 		}
+
+		if cs := newReq.CSeq(); cs != nil {
+			s.mu.Lock()
+			s.regCSeq = cs.SeqNo
+			s.mu.Unlock()
+		}
 	}
 
 	if res.StatusCode != 200 {
@@ -300,6 +380,55 @@ func (s *Server) register(ctx context.Context, expirySec int) error {
 	s.mu.Lock()
 	s.registered = expirySec > 0
 	s.mu.Unlock()
+	return nil
+}
+
+// buildRegisterRequest produces a fresh REGISTER with the sticky Call-ID and
+// the next sticky CSeq pre-attached. The returned nextCSeq is what we set on
+// the request; sipgo's REGISTER builder will bump it by one more before
+// sending.
+func (s *Server) buildRegisterRequest(recipient sip.Uri, expirySec int) (*sip.Request, uint32) {
+	req := sip.NewRequest(sip.REGISTER, recipient)
+	req.AppendHeader(sip.NewHeader("Contact", s.regContact))
+	req.AppendHeader(sip.NewHeader("Expires", strconv.Itoa(expirySec)))
+	req.SetTransport("UDP")
+
+	s.mu.Lock()
+	callID := sip.CallIDHeader(s.regCallID)
+	nextCSeq := s.regCSeq + 1
+	s.mu.Unlock()
+
+	req.AppendHeader(&callID)
+	cseq := &sip.CSeqHeader{SeqNo: nextCSeq, MethodName: sip.REGISTER}
+	req.AppendHeader(cseq)
+
+	return req, nextCSeq
+}
+
+// attachDigest computes a digest credential and appends it as the
+// Authorization header. Used when re-using a cached challenge.
+func attachDigest(req *sip.Request, recipient sip.Uri, chal *digest.Challenge, count int, username, password string) error {
+	return attachDigestNamed(req, recipient, chal, count, username, password, false)
+}
+
+// attachDigestNamed appends Authorization or Proxy-Authorization depending on
+// whether the challenge was a 407.
+func attachDigestNamed(req *sip.Request, recipient sip.Uri, chal *digest.Challenge, count int, username, password string, proxy bool) error {
+	cred, err := digest.Digest(chal, digest.Options{
+		Method:   req.Method.String(),
+		URI:      recipient.Host,
+		Username: username,
+		Password: password,
+		Count:    count,
+	})
+	if err != nil {
+		return err
+	}
+	hdr := "Authorization"
+	if proxy {
+		hdr = "Proxy-Authorization"
+	}
+	req.AppendHeader(sip.NewHeader(hdr, cred.String()))
 	return nil
 }
 
@@ -356,4 +485,15 @@ func firstNonLoopbackIP() string {
 		}
 	}
 	return "127.0.0.1"
+}
+
+// randomCallID returns a random 16-byte hex string suitable as a Call-ID.
+func randomCallID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// Fall back to a time-based pseudo-id; collision risk is acceptable
+		// for a single-extension UA.
+		return fmt.Sprintf("bellerophon-%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:]) + "@bellerophon"
 }

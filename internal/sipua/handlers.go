@@ -6,7 +6,8 @@ import (
 	"github.com/emiago/sipgo/sip"
 )
 
-// activeCalls indexes in-flight calls by Call-ID for BYE/ACK correlation.
+// callTable indexes in-flight calls by Call-ID for BYE/ACK correlation and
+// shutdown teardown. The zero value is usable.
 type callTable struct {
 	mu sync.Mutex
 	m  map[string]*Call
@@ -35,7 +36,16 @@ func (t *callTable) drop(id string) *Call {
 	return c
 }
 
-var calls = &callTable{}
+// snapshot returns a copy of all active calls without holding the lock.
+func (t *callTable) snapshot() []*Call {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := make([]*Call, 0, len(t.m))
+	for _, c := range t.m {
+		out = append(out, c)
+	}
+	return out
+}
 
 func (s *Server) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 	callID := ""
@@ -63,19 +73,19 @@ func (s *Server) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 		c.To = t.Address
 	}
 
-	calls.put(callID, c)
+	s.calls.put(callID, c)
+
+	if s.inviteHandler == nil {
+		s.logger.Warn("no InviteHandler set; declining call")
+		_ = c.Reply(488, "Not Acceptable Here", nil)
+		s.calls.drop(callID)
+		return
+	}
 
 	// Send 180 Ringing to give the caller audible feedback while the app
 	// builds its answer.
 	if err := tx.Respond(sip.NewResponseFromRequest(req, 180, "Ringing", nil)); err != nil {
 		s.logger.Warn("send 180 Ringing failed", "error", err)
-	}
-
-	if s.inviteHandler == nil {
-		s.logger.Warn("no InviteHandler set; declining call")
-		_ = c.Reply(488, "Not Acceptable Here", nil)
-		calls.drop(callID)
-		return
 	}
 
 	// Run the user handler in-band so back-pressure is honoured. sipgo
@@ -113,17 +123,28 @@ func (s *Server) handleBye(req *sip.Request, tx sip.ServerTransaction) {
 		s.logger.Warn("send 200 OK to BYE failed", "error", err)
 	}
 
-	if c := calls.drop(callID); c != nil {
+	if c := s.calls.drop(callID); c != nil {
 		c.fireBye()
 	}
 }
 
+// handleOptions replies 200 OK to OPTIONS keepalives. If the Call-ID belongs
+// to a known dialog, the response is logged as in-dialog so operators can
+// see registrar keepalives separately from mid-dialog probes.
 func (s *Server) handleOptions(req *sip.Request, tx sip.ServerTransaction) {
+	callID := ""
+	if h := req.CallID(); h != nil {
+		callID = h.Value()
+	}
+	inDialog := s.calls.get(callID) != nil
+
 	res := sip.NewResponseFromRequest(req, 200, "OK", nil)
 	res.AppendHeader(sip.NewHeader("Allow", "INVITE, ACK, BYE, CANCEL, OPTIONS"))
 	if err := tx.Respond(res); err != nil {
 		s.logger.Warn("send 200 OK to OPTIONS failed", "error", err)
+		return
 	}
+	s.logger.Debug("OPTIONS keepalive", "call_id", callID, "in_dialog", inDialog)
 }
 
 func uriString(h sip.Header) string {
