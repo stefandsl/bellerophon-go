@@ -17,6 +17,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/pion/randutil v0.1.0 // indirect
+	github.com/pion/rtcp v1.2.16 // indirect
 	github.com/pion/rtp v1.8.27 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
 	golang.org/x/sync v0.16.0 // indirect

@@ -10,6 +10,8 @@ package rtp
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
@@ -17,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pion/rtp"
 
@@ -83,6 +86,14 @@ type Options struct {
 	// RecvBufBytes sizes the inbound channel. Zero -> 256 packets (~5 s at
 	// 20 ms ptime, generous head-room for the jitter buffer in T03).
 	RecvBufBytes int
+	// SSRC overrides the local synchronization source. Zero -> random.
+	SSRC uint32
+	// ClockRate is the RTP timestamp clock used for jitter math. Zero ->
+	// 8000 (G.711). When the codec changes in S05 this becomes per-session.
+	ClockRate uint32
+	// Now is the clock source for RTCP timing. Zero -> time.Now. Injectable
+	// for tests.
+	Now func() time.Time
 }
 
 // Session is one RTP flow: an RTP UDP socket plus its paired RTCP socket on
@@ -109,6 +120,31 @@ type Session struct {
 	rxBytes   atomic.Uint64
 	txBytes   atomic.Uint64
 	parseErrs atomic.Uint64
+
+	// Identity + clock used by the RTCP reporter (T04).
+	localSSRC uint32
+	clockRate uint32
+	now       func() time.Time
+
+	// Last RTP timestamp sent (host order). Used for SR.
+	lastTxTS atomic.Uint32
+
+	// Inbound per-stream stats for the RTCP RR/SR block. Single peer SSRC
+	// is the common case in our SIP world; if the peer changes mid-call we
+	// reset.
+	rxMu          sync.Mutex
+	rxSSRC        uint32
+	rxSSRCSet     bool
+	rxBaseSeq     uint32 // extended
+	rxMaxSeq      uint32 // extended
+	rxRecv        uint32 // packets received in this SSRC stream
+	rxJitter      float64
+	rxTransitSet  bool
+	rxLastTransit int64 // transit time in clock-rate units (signed for math)
+	rxLastSeq     uint16
+	rxCycles      uint32
+	rxLastSRMid   uint32    // middle-32 of remote SR NTP
+	rxLastSRWhen  time.Time // arrival of last SR
 }
 
 // NewSession binds an RTP/RTCP socket pair somewhere in opts.PortRange and
@@ -144,13 +180,36 @@ func NewSession(opts Options) (*Session, error) {
 		bufN = 256
 	}
 
+	ssrc := opts.SSRC
+	if ssrc == 0 {
+		var b [4]byte
+		if _, err := rand.Read(b[:]); err != nil {
+			return nil, fmt.Errorf("rtp: random SSRC: %w", err)
+		}
+		ssrc = binary.BigEndian.Uint32(b[:])
+		if ssrc == 0 {
+			ssrc = 1
+		}
+	}
+	clk := opts.ClockRate
+	if clk == 0 {
+		clk = 8000
+	}
+	nowFn := opts.Now
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+
 	s := &Session{
-		logger:   opts.Logger.With("component", "rtp", "rtp_port", port),
-		rtpConn:  rtpConn,
-		rtcpConn: rtcpConn,
-		rtpPort:  port,
-		recv:     make(chan Packet, bufN),
-		closed:   make(chan struct{}),
+		logger:    opts.Logger.With("component", "rtp", "rtp_port", port),
+		rtpConn:   rtpConn,
+		rtcpConn:  rtcpConn,
+		rtpPort:   port,
+		recv:      make(chan Packet, bufN),
+		closed:    make(chan struct{}),
+		localSSRC: ssrc,
+		clockRate: clk,
+		now:       nowFn,
 	}
 	s.logger.Info("rtp session opened",
 		"rtp_addr", rtpConn.LocalAddr().String(),
@@ -209,8 +268,12 @@ func (s *Session) Send(h rtp.Header, payload []byte) error {
 	}
 	s.txPackets.Add(1)
 	s.txBytes.Add(uint64(n))
+	s.lastTxTS.Store(h.Timestamp)
 	return nil
 }
+
+// LocalSSRC returns the SSRC used for outbound RTP and RTCP from this session.
+func (s *Session) LocalSSRC() uint32 { return s.localSSRC }
 
 // Stats is a snapshot of session counters. Cheap to call; values are
 // loaded with atomics.
@@ -287,6 +350,7 @@ func (s *Session) readLoop() {
 		}
 		s.rxPackets.Add(1)
 		s.rxBytes.Add(uint64(n))
+		s.observeRx(pkt.Header.SSRC, pkt.Header.SequenceNumber, pkt.Header.Timestamp)
 		payload := make([]byte, len(pkt.Payload))
 		copy(payload, pkt.Payload)
 		out := Packet{Header: pkt.Header, Payload: payload}
@@ -301,6 +365,92 @@ func (s *Session) readLoop() {
 			s.parseErrs.Add(1)
 		}
 	}
+}
+
+// observeRx updates per-stream inbound stats — sequence tracking, packet
+// count, and the interarrival jitter from RFC 3550 §6.4.1. Called from the
+// read loop on every parsed inbound RTP packet.
+func (s *Session) observeRx(ssrc uint32, seq uint16, ts uint32) {
+	now := s.now()
+	s.rxMu.Lock()
+	defer s.rxMu.Unlock()
+
+	if !s.rxSSRCSet || s.rxSSRC != ssrc {
+		// Fresh stream (first packet, or peer SSRC changed mid-call). Reset.
+		s.rxSSRC = ssrc
+		s.rxSSRCSet = true
+		s.rxBaseSeq = uint32(seq)
+		s.rxMaxSeq = uint32(seq)
+		s.rxLastSeq = seq
+		s.rxCycles = 0
+		s.rxRecv = 1
+		s.rxJitter = 0
+		s.rxTransitSet = false
+	} else {
+		// 16-bit seq wrap detection.
+		diff := int32(seq) - int32(s.rxLastSeq)
+		if diff < -0x7FFF {
+			s.rxCycles++
+		}
+		s.rxLastSeq = seq
+		ext := (s.rxCycles << 16) | uint32(seq)
+		if ext > s.rxMaxSeq {
+			s.rxMaxSeq = ext
+		}
+		s.rxRecv++
+	}
+
+	// Interarrival jitter — RFC 3550 §6.4.1.
+	// transit = arrival (in clock-rate ticks) - rtp timestamp
+	arrivalTicks := int64(now.UnixNano()) * int64(s.clockRate) / int64(time.Second)
+	transit := arrivalTicks - int64(ts)
+	if s.rxTransitSet {
+		d := transit - s.rxLastTransit
+		if d < 0 {
+			d = -d
+		}
+		s.rxJitter += (float64(d) - s.rxJitter) / 16.0
+	}
+	s.rxLastTransit = transit
+	s.rxTransitSet = true
+}
+
+// rxSnapshot returns a copy of the inbound report state. Returns false when
+// no inbound RTP has been observed yet.
+type rxSnapshot struct {
+	ssrc         uint32
+	baseSeq      uint32
+	maxSeq       uint32 // extended highest sequence
+	received     uint32
+	jitter       uint32
+	lastSRMid    uint32
+	lastSRWhen   time.Time
+	expectedPrev uint32
+	lostPrev     uint32
+}
+
+func (s *Session) rxSnap() (rxSnapshot, bool) {
+	s.rxMu.Lock()
+	defer s.rxMu.Unlock()
+	if !s.rxSSRCSet {
+		return rxSnapshot{}, false
+	}
+	return rxSnapshot{
+		ssrc:       s.rxSSRC,
+		baseSeq:    s.rxBaseSeq,
+		maxSeq:     s.rxMaxSeq,
+		received:   s.rxRecv,
+		jitter:     uint32(s.rxJitter),
+		lastSRMid:  s.rxLastSRMid,
+		lastSRWhen: s.rxLastSRWhen,
+	}, true
+}
+
+func (s *Session) noteRemoteSR(mid32 uint32, when time.Time) {
+	s.rxMu.Lock()
+	s.rxLastSRMid = mid32
+	s.rxLastSRWhen = when
+	s.rxMu.Unlock()
 }
 
 // bindPair walks the port range looking for a free even port for RTP whose
