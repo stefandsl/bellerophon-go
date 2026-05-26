@@ -415,43 +415,70 @@ func (s *Session) observeRx(ssrc uint32, seq uint16, ts uint32) {
 	s.rxTransitSet = true
 }
 
-// rxSnapshot returns a copy of the inbound report state. Returns false when
-// no inbound RTP has been observed yet.
-type rxSnapshot struct {
-	ssrc         uint32
-	baseSeq      uint32
-	maxSeq       uint32 // extended highest sequence
-	received     uint32
-	jitter       uint32
-	lastSRMid    uint32
-	lastSRWhen   time.Time
-	expectedPrev uint32
-	lostPrev     uint32
+// RxSnapshot is a copy of the inbound report state at a point in time.
+type RxSnapshot struct {
+	SSRC         uint32
+	BaseSeq      uint32
+	MaxSeq       uint32 // extended highest sequence
+	Received     uint32
+	Jitter       uint32
+	LastSRMid    uint32
+	LastSRWhen   time.Time
+	ExpectedPrev uint32
+	LostPrev     uint32
 }
 
-func (s *Session) rxSnap() (rxSnapshot, bool) {
+
+// WriteRTCP writes raw RTCP data to the given address via the RTCP socket.
+func (s *Session) WriteRTCP(data []byte, addr *net.UDPAddr) (int, error) {
+	return s.rtcpConn.WriteToUDP(data, addr)
+}
+
+// ReadRTCP reads from the RTCP socket after setting the given deadline.
+func (s *Session) ReadRTCP(buf []byte, deadline time.Time) (int, *net.UDPAddr, error) {
+	_ = s.rtcpConn.SetReadDeadline(deadline)
+	return s.rtcpConn.ReadFromUDP(buf)
+}
+
+// Remote returns the current remote address, or nil if not yet set.
+func (s *Session) Remote() *net.UDPAddr { return s.remote.Load() }
+
+// RxSnapshot returns a snapshot of the inbound stream stats. The bool is false
+// when no inbound RTP has been observed yet.
+func (s *Session) RxSnapshot() (RxSnapshot, bool) {
 	s.rxMu.Lock()
 	defer s.rxMu.Unlock()
 	if !s.rxSSRCSet {
-		return rxSnapshot{}, false
+		return RxSnapshot{}, false
 	}
-	return rxSnapshot{
-		ssrc:       s.rxSSRC,
-		baseSeq:    s.rxBaseSeq,
-		maxSeq:     s.rxMaxSeq,
-		received:   s.rxRecv,
-		jitter:     uint32(s.rxJitter),
-		lastSRMid:  s.rxLastSRMid,
-		lastSRWhen: s.rxLastSRWhen,
+	return RxSnapshot{
+		SSRC:       s.rxSSRC,
+		BaseSeq:    s.rxBaseSeq,
+		MaxSeq:     s.rxMaxSeq,
+		Received:   s.rxRecv,
+		Jitter:     uint32(s.rxJitter),
+		LastSRMid:  s.rxLastSRMid,
+		LastSRWhen: s.rxLastSRWhen,
 	}, true
 }
 
-func (s *Session) noteRemoteSR(mid32 uint32, when time.Time) {
+// LastTxTimestamp returns the RTP timestamp of the last sent packet.
+func (s *Session) LastTxTimestamp() uint32 { return s.lastTxTS.Load() }
+
+// NoteRemoteSR records the middle-32 of a remote SR's NTP timestamp and its
+// arrival time, used for DLSR computation.
+func (s *Session) NoteRemoteSR(mid32 uint32, when time.Time) {
 	s.rxMu.Lock()
 	s.rxLastSRMid = mid32
 	s.rxLastSRWhen = when
 	s.rxMu.Unlock()
 }
+
+// Now returns the session's current time (injectable clock).
+func (s *Session) Now() time.Time { return s.now() }
+
+// LocalAddr returns the local address of the RTP socket.
+func (s *Session) LocalAddr() net.Addr { return s.rtpConn.LocalAddr() }
 
 // bindPair walks the port range looking for a free even port for RTP whose
 // odd successor is also free (for RTCP).

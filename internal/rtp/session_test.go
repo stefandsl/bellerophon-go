@@ -211,6 +211,26 @@ func TestSessionCloseIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestObserveRxJitterIsNonZeroOnVariableArrival(t *testing.T) {
+	s := &Session{
+		clockRate: 8000,
+		now:       time.Now,
+	}
+	base := time.Unix(1_700_000_000, 0)
+	s.now = func() time.Time { return base }
+	s.observeRx(0xAB, 1, 0)
+	s.now = func() time.Time { return base.Add(20 * time.Millisecond) }
+	s.observeRx(0xAB, 2, 160)
+	if got := s.rxJitter; got > 1 {
+		t.Errorf("jitter after on-time arrivals = %.3f, want ~0", got)
+	}
+	s.now = func() time.Time { return base.Add(50 * time.Millisecond) }
+	s.observeRx(0xAB, 3, 320)
+	if s.rxJitter <= 0 {
+		t.Errorf("jitter after a late packet = %.3f, want > 0", s.rxJitter)
+	}
+}
+
 func TestRTCPPortIsRTPPortPlusOne(t *testing.T) {
 	s, err := NewSession(Options{
 		LocalIP:   "127.0.0.1",
