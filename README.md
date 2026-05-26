@@ -26,11 +26,33 @@ branch):
 - [`docs/M002-DRAFT.md`](docs/M002-DRAFT.md) — pre-spec sketch for the inbound
   AI conversation loop; has open questions to resolve before promotion
 
-## Build
+## Install
 
-Requires Go 1.23+.
+### Option A — download a prebuilt binary
+
+Pick the artifact for your platform from
+[the latest release](https://github.com/stefandsl/bellerophon-go/releases/latest)
+(`linux-amd64`, `linux-arm64`, `darwin-amd64`, `darwin-arm64`). Example for
+Linux amd64:
 
 ```bash
+curl -fsSL -o bellerophon \
+  https://github.com/stefandsl/bellerophon-go/releases/latest/download/bellerophon-linux-amd64
+chmod +x bellerophon
+./bellerophon --version
+```
+
+### Option B — build from source
+
+Requires Go 1.23+. On a fresh Debian/Ubuntu box:
+
+```bash
+sudo apt-get update && sudo apt-get install -y git ca-certificates curl
+# Install Go 1.23 if your distro ships an older one (`go version` to check):
+curl -fsSL https://go.dev/dl/go1.23.4.linux-amd64.tar.gz \
+  | sudo tar -C /usr/local -xz
+export PATH=/usr/local/go/bin:$PATH
+
 git clone https://github.com/stefandsl/bellerophon-go.git
 cd bellerophon-go
 go build -o bellerophon ./cmd/bellerophon
@@ -57,26 +79,6 @@ cp config.example.yaml config.yaml
 `--check-config` distinguishes hard errors (missing required fields, malformed
 values) from warnings (unset env-var secrets, placeholder values still in
 place). Warnings do not fail the check.
-
-## Releases (planned)
-
-Cross-built artifacts will be published as:
-
-```
-bellerophon-darwin-arm64
-bellerophon-darwin-amd64
-bellerophon-linux-arm64
-bellerophon-linux-amd64
-```
-
-Example download (not yet available):
-
-```bash
-curl -L -o bellerophon \
-  https://github.com/stefandsl/bellerophon-go/releases/download/v0.1.0/bellerophon-linux-arm64
-chmod +x bellerophon
-./bellerophon --config config.yaml
-```
 
 ## Layout
 
