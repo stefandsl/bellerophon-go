@@ -19,6 +19,7 @@ func main() {
 	showVersion := fs.Bool("version", false, "print version and exit")
 	checkConfig := fs.Bool("check-config", false, "validate config and exit")
 	sipListen := fs.String("sip.listen", "0.0.0.0:5060", "local SIP UA bind address (host:port)")
+	echoMode := fs.Bool("echo-mode", false, "answer inbound calls with an RTP echo loop (M001/S04 demo)")
 	config.RegisterFlags(fs)
 
 	if err := fs.Parse(os.Args[1:]); err != nil {
@@ -80,16 +81,22 @@ func main() {
 		logger.Error("sip ua init failed", "error", err)
 		os.Exit(1)
 	}
-	srv.OnInvite(func(c *sipua.Call) {
-		// S03 stub: accept the call with no media. S04 wires real SDP/RTP.
-		logger.Info("invite accepted (S03 stub: no media)", "call_id", c.CallID)
-		c.OnBye(func() {
-			logger.Info("call ended", "call_id", c.CallID)
+	if *echoMode {
+		logger.Info("echo mode enabled — inbound calls will be answered with an RTP echo loop")
+		srv.OnInvite(echoHandler(cfg, logger))
+	} else {
+		srv.OnInvite(func(c *sipua.Call) {
+			// S03 stub: accept the call with no media. The echo handler
+			// (above, under --echo-mode) wires real SDP/RTP per S04.
+			logger.Info("invite accepted (S03 stub: no media)", "call_id", c.CallID)
+			c.OnBye(func() {
+				logger.Info("call ended", "call_id", c.CallID)
+			})
+			if err := c.Reply(200, "OK", stubSDP(cfg.RTP.ExternalIP)); err != nil {
+				logger.Error("reply 200 failed", "error", err)
+			}
 		})
-		if err := c.Reply(200, "OK", stubSDP(cfg.RTP.ExternalIP)); err != nil {
-			logger.Error("reply 200 failed", "error", err)
-		}
-	})
+	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
