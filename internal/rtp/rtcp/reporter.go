@@ -111,7 +111,7 @@ func (r *Reporter) readLoop(ctx context.Context) {
 		}
 		for _, pkt := range pkts {
 			if sr, ok := pkt.(*rtcp.SenderReport); ok {
-				mid := uint32((sr.NTPTime >> 16) & 0xFFFFFFFF)
+				mid := uint32((sr.NTPTime >> 16) & 0xFFFFFFFF) //nolint:gosec // masked to 32 bits, fits by construction
 				r.sess.NoteRemoteSR(mid, r.sess.Now())
 			}
 		}
@@ -163,8 +163,8 @@ func (r *Reporter) buildSR(now time.Time, txPackets, txBytes uint64, rx rtp.RxSn
 		SSRC:        r.sess.LocalSSRC(),
 		NTPTime:     ntpFromTime(now),
 		RTPTime:     r.sess.LastTxTimestamp(),
-		PacketCount: uint32(txPackets),
-		OctetCount:  uint32(txBytes),
+		PacketCount: uint32(txPackets & 0xFFFFFFFF), //nolint:gosec // RFC 3550 expects modular wrap at 2^32
+		OctetCount:  uint32(txBytes & 0xFFFFFFFF),   //nolint:gosec // RFC 3550 expects modular wrap at 2^32
 	}
 	if hasRx {
 		sr.Reports = []rtcp.ReceptionReport{r.buildReportBlock(rx, now)}
@@ -188,7 +188,7 @@ func (r *Reporter) buildReportBlock(rx rtp.RxSnapshot, now time.Time) rtcp.Recep
 	}
 	var fraction uint8
 	if expected > 0 {
-		fraction = uint8((uint64(lost) * 256) / uint64(expected))
+		fraction = uint8((uint64(lost) * 256) / uint64(expected)) //nolint:gosec // lost ≤ expected, so quotient ≤ 256; uint8 sufficient
 	}
 
 	var dlsr uint32
@@ -221,8 +221,8 @@ func (r *Reporter) rtcpDest() *net.UDPAddr {
 
 func ntpFromTime(t time.Time) uint64 {
 	const ntpEpochOffset = 2208988800
-	sec := uint64(t.Unix() + ntpEpochOffset)
-	frac := uint64(t.Nanosecond()) * (1 << 32) / 1_000_000_000
+	sec := uint64(t.Unix() + ntpEpochOffset)                   //nolint:gosec // post-1900 time always yields a positive int64
+	frac := uint64(t.Nanosecond()) * (1 << 32) / 1_000_000_000 //nolint:gosec // Nanosecond() returns [0, 1e9-1]
 	return (sec << 32) | frac
 }
 

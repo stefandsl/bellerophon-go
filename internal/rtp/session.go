@@ -267,7 +267,7 @@ func (s *Session) Send(h rtp.Header, payload []byte) error {
 		return fmt.Errorf("rtp: write %s: %w", dst, err)
 	}
 	s.txPackets.Add(1)
-	s.txBytes.Add(uint64(n))
+	s.txBytes.Add(uint64(n)) //nolint:gosec // n is bytes written by WriteToUDP, always ≥0
 	s.lastTxTS.Store(h.Timestamp)
 	return nil
 }
@@ -349,7 +349,7 @@ func (s *Session) readLoop() {
 			continue
 		}
 		s.rxPackets.Add(1)
-		s.rxBytes.Add(uint64(n))
+		s.rxBytes.Add(uint64(n)) //nolint:gosec // n is bytes read by ReadFromUDP, always ≥0
 		s.observeRx(pkt.Header.SSRC, pkt.Header.SequenceNumber, pkt.Header.Timestamp)
 		payload := make([]byte, len(pkt.Payload))
 		copy(payload, pkt.Payload)
@@ -427,7 +427,6 @@ type RxSnapshot struct {
 	ExpectedPrev uint32
 	LostPrev     uint32
 }
-
 
 // WriteRTCP writes raw RTCP data to the given address via the RTCP socket.
 func (s *Session) WriteRTCP(data []byte, addr *net.UDPAddr) (int, error) {

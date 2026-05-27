@@ -57,12 +57,12 @@ func ParseSDP(body []byte) (*SDP, error) {
 	}
 	out := &SDP{}
 	var (
-		inAudio    bool
-		audioSeen  bool
-		sessionC   string
-		mediaC     string
-		ptime      int
-		direction  string
+		inAudio   bool
+		audioSeen bool
+		sessionC  string
+		mediaC    string
+		ptime     int
+		direction string
 	)
 	for _, raw := range bytes.Split(body, []byte("\n")) {
 		line := strings.TrimRight(string(raw), "\r")
@@ -217,7 +217,7 @@ func BuildAnswer(opts AnswerOptions) ([]byte, error) {
 	}
 	sid := opts.SessionID
 	if sid == 0 {
-		sid = uint64(opts.LocalRTPPort)
+		sid = uint64(opts.LocalRTPPort) //nolint:gosec // RTP port is in [0, 65535], always ≥0
 	}
 
 	codecName := "PCMU"
