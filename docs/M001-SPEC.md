@@ -131,7 +131,7 @@ Tasks:
 Must-haves:
 - `internal/rtp/Session` opens a UDP socket in the configured port range (`RTP_PORT_RANGE`), sends/recvs pion/rtp packets.
 - SDP offer/answer logic in `internal/sipua/sdp.go` — offers `PCMU,PCMA`, accepts whatever the caller answered with from that set. Includes `a=ptime:20`, `a=sendrecv`.
-- Jitter buffer in `internal/rtp/jitter.go` — fixed 60 ms adaptive default. Discard packets older than `now - 100 ms`. Configurable via `RTP_JITTER_MS` env.
+- Jitter buffer in `internal/rtp/jitter/jitter.go` — fixed 60 ms adaptive default. Discard packets older than `now - 100 ms`. Configurable via `RTP_JITTER_MS` env.
 - RTCP SR/RR heartbeat every 5 s on `rtp_port + 1` per RFC 3550.
 - Echo loop wired in `cmd/bellerophon/echo.go` (only active under `--echo-mode` flag).
 - Synthetic loss test: drop 5 % of incoming packets — output must still be intelligible (no chained-error retransmits, no buffer underrun crashes).
@@ -231,7 +231,8 @@ Consumes from S02:
 S04 → S05
 Produces:
   internal/rtp/session.go      → Session.Send([]byte), Session.Recv() <-chan Packet
-  internal/rtp/jitter.go       → JitterBuffer
+  internal/rtp/jitter/jitter.go → JitterBuffer
+  internal/rtp/rtcp/reporter.go → Reporter (RTCP SR/RR heartbeat)
   internal/sipua/sdp.go        → BuildSDP filled in (PCMU,PCMA negotiation)
 
 Consumes from S03:

@@ -85,7 +85,9 @@ cmd/bellerophon/        # main; CLI, config load, log init
 internal/config/        # YAML schema + validation
 internal/logging/       # slog setup
 internal/sip/           # (M001 S03) sipgo REGISTER + INVITE handler
-internal/rtp/           # (M001 S04) UDP RTP transport + jitter + RTCP
+internal/rtp/           # (M001 S04) RTP session + accessors
+internal/rtp/jitter/    #   adaptive jitter buffer
+internal/rtp/rtcp/      #   RTCP SR/RR reporter
 internal/audio/         # (M001 S05) G.711 codec + WAV playback
 internal/vad/           # (M002) energy VAD + utterance buffering
 internal/stt/           # (M002) Whisper-compatible client
