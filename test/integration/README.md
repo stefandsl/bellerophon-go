@@ -1,8 +1,15 @@
 # test/integration — live multi-provider tests
 
 The tests in this directory exercise the full SIP/RTP path against **real**
-registrars: a dockerized Asterisk, MessageNet (Italian ITSP), and 3CX. They
-are intentionally gated by environment variables so unit-test runs
+upstreams. Three flavors are covered:
+
+- **generic** — a dockerized Asterisk (self-hosted PBX), the RFC 3261
+  baseline.
+- **messagenet** — the DID provider (SIP trunk) that delivers inbound
+  Italian DIDs and terminates outbound calls. Not a PBX.
+- **3cx** — Stefan's hosted 3CX deployment.
+
+They are intentionally gated by environment variables so unit-test runs
 (`go test ./...`) skip them with a clear message and finish quickly.
 
 ## Gates
@@ -22,7 +29,8 @@ skip message so a CI reviewer can see exactly what to set.
 - For `live_generic_test.go`: Docker + the bundled `docker-compose.asterisk.yml`
   (or any Asterisk instance reachable on the host network — pass its
   address via `ASTERISK_HOST` / `ASTERISK_PORT`).
-- For the ITSP tests: a sip account with at least one DID you can call.
+- For the MessageNet test: an account on a DID provider (MessageNet by
+  default) with at least one DID you can call from PSTN.
 
 See `docs/m001-uat.md` for the matching **manual** UAT script.
 
@@ -36,7 +44,7 @@ go test -v ./test/integration/...
 docker compose -f test/integration/docker-compose.asterisk.yml up -d
 BELLEROPHON_LIVE_GENERIC=1 go test -v ./test/integration/...
 
-# Full run including MessageNet (requires real account credentials):
+# Full run including MessageNet DID provider (requires real account credentials):
 MESSAGENET_USER=... MESSAGENET_PASS=... MESSAGENET_DID=... \
   BELLEROPHON_LIVE_MESSAGENET=1 go test -v ./test/integration/...
 

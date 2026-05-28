@@ -2,9 +2,10 @@
 
 This document is the step-by-step manual verification plan for the M001
 "SIP + media foundation" milestone. The same binary is exercised against
-**three providers** in turn: MessageNet (Italian ITSP), a generic SIP
-registrar (Asterisk), and 3CX. Each section covers all 10 success criteria
-from [`M001-SPEC.md §2`](M001-SPEC.md).
+**three providers** in turn: MessageNet (Italian DID provider — inbound
+DIDs delivered over a SIP trunk, no PBX), a generic SIP registrar
+(Asterisk), and 3CX. Each section covers all 10 success criteria from
+[`M001-SPEC.md §2`](M001-SPEC.md).
 
 If any section fails, the slice it falls under is reopened — do **not**
 sign off the milestone with a partial pass.
@@ -25,18 +26,23 @@ sign off the milestone with a partial pass.
 
 ## Provider matrix
 
-| Provider | Config file used | Required env / credentials |
-|---|---|---|
-| **MessageNet** | `config.messagenet.yaml` | `MESSAGENET_USER`, `MESSAGENET_PASS`, an outbound DID you can dial |
-| **Generic (Asterisk)** | `config.asterisk.yaml` | `ASTERISK_*` SIP creds, a Linphone client to call the registered extension |
-| **3CX** | `config.3cx.yaml` | `THREECX_*`, Stefan's existing 3CX deployment |
+| Provider | Type | Config file used | Required env / credentials |
+|---|---|---|---|
+| **MessageNet** | DID provider (SIP trunk) | `config.messagenet.yaml` | `MESSAGENET_USER`, `MESSAGENET_PASS`, an inbound DID you can dial from PSTN |
+| **Generic (Asterisk)** | self-hosted PBX | `config.asterisk.yaml` | `ASTERISK_*` SIP creds, a Linphone client to call the registered extension |
+| **3CX** | hosted PBX | `config.3cx.yaml` | `THREECX_*`, Stefan's existing 3CX deployment |
 
 Each provider gets its own UAT section below. **Run all three.** A green
 on MessageNet + 3CX with Asterisk skipped does NOT pass the milestone.
 
 ---
 
-## Section A — Provider: MessageNet
+## Section A — Provider: MessageNet (DID provider / SIP trunk)
+
+MessageNet is **not** a PBX. They sell Italian DIDs delivered over a SIP
+trunk; Bellerophon registers as the UA that owns those DIDs and answers
+inbound calls to them directly. Outbound calls (M003+) go through the
+same trunk for termination.
 
 ### A.1 Register / Unregister (criterion §2.1)
 

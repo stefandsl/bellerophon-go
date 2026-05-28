@@ -7,7 +7,10 @@
 //
 // Three providers ship in M001:
 //   - generic     — RFC 3261 baseline, Asterisk-compatible.
-//   - messagenet  — the user's actual ITSP for inbound Italian DIDs.
+//   - messagenet  — DID provider (messagenet.it); inbound Italian DIDs +
+//                   outbound termination over a SIP trunk. Not a PBX —
+//                   Bellerophon is the UA that answers calls to those
+//                   DIDs directly.
 //   - 3cx         — legacy compatibility for Stefan's existing PBX.
 //
 // New providers add a file + a Get() registry case.
@@ -31,8 +34,8 @@ const (
 // LocalDID is the called identifier extracted from an inbound INVITE's
 // To: URI, normalized into both an E.164 form (preferred for downstream
 // routing) and a Raw form (as it appeared on the wire). For SIP-extension
-// providers like 3CX the two are usually identical; for ITSP DIDs they
-// differ — MessageNet drops the country code, for example.
+// providers like 3CX the two are usually identical; for DID-provider
+// trunks they differ — MessageNet drops the country code, for example.
 type LocalDID struct {
 	E164 string // canonical e.g. "+390123456789"
 	Raw  string // as the provider delivered it, e.g. "0123456789"

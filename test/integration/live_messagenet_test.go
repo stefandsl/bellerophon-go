@@ -8,9 +8,10 @@ import (
 )
 
 // TestLive_MessageNet_RegisterInboundDID gates on
-// BELLEROPHON_LIVE_MESSAGENET=1. It is the dedicated MessageNet leg of
-// the multi-provider M001 UAT and exercises the sipprov.MessageNet quirks
-// that don't show up on Asterisk or 3CX:
+// BELLEROPHON_LIVE_MESSAGENET=1. It is the dedicated DID-provider leg of
+// the multi-provider M001 UAT — MessageNet is a SIP trunk (not a PBX)
+// that sells Italian DIDs. The test exercises the sipprov.MessageNet
+// quirks that don't show up on Asterisk or 3CX:
 //
 //   - DID arrives in the To: URI without country code; LocalDID.E164
 //     should carry the +39 prefix.

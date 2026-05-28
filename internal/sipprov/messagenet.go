@@ -6,21 +6,26 @@ import (
 	"time"
 )
 
-// MessageNetProvider is the ITSP-side provider for messagenet.it. Key
-// behavioral differences from generic:
+// MessageNetProvider is the SIP-trunk provider for messagenet.it.
+//
+// MessageNet is a **DID provider**, not a PBX — they sell Italian inbound
+// numbers (DIDs) and outbound call termination over a SIP trunk. There is
+// no PBX on the MessageNet side; Bellerophon is the UA that answers
+// inbound calls to those DIDs directly. The provider record exists to
+// codify the wire-level quirks of that trunk:
 //
 //   - Inbound DIDs arrive in the To: URI without the country code (e.g.
 //     "0123456789"). NormalizeInboundDID prepends the configured country
 //     code so downstream routing sees a single E.164 form.
-//   - The registrar sends OPTIONS pings periodically; we should respond
-//     and also send our own at a matching cadence (~25 s) so the binding
-//     stays alive.
+//   - MessageNet sends OPTIONS pings periodically; we should respond and
+//     also send our own at a matching cadence (~25 s) so the trunk
+//     binding stays alive.
 //
 // REGISTER auth flow is the standard 401-challenge dance — no special
 // header injection needed (despite some older docs claiming otherwise).
 type MessageNetProvider struct {
 	// CountryCode is prepended to inbound DIDs that don't already start
-	// with "+". Defaults to "+39" (Italy) — MessageNet is an Italian ITSP.
+	// with "+". Defaults to "+39" (Italy) — MessageNet sells Italian DIDs.
 	CountryCode string
 }
 
@@ -51,11 +56,12 @@ func (m *MessageNetProvider) NormalizeInboundDID(s string) LocalDID {
 	return LocalDID{E164: e164, Raw: raw}
 }
 
-// MessageNet declares a binding stale after roughly 30 s without
+// MessageNet declares a trunk binding stale after roughly 30 s without
 // activity. 25 s gives us comfortable headroom for one round-trip retry.
 func (*MessageNetProvider) OptionsKeepaliveInterval() time.Duration { return 25 * time.Second }
 
-// MessageNet accepts any RFC-3261-compliant Contact; no rewrite needed.
+// MessageNet accepts any RFC-3261-compliant Contact on the trunk; no
+// rewrite needed.
 func (*MessageNetProvider) RewriteContactForRegister(_ *ContactHints) {}
 
 // allDigits reports whether s is non-empty and contains only ASCII digits.
