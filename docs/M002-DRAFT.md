@@ -1,14 +1,14 @@
 # M002 (DRAFT) — Inbound AI Conversation Loop
 
-> **Draft.** Refine after M001 closes — concrete 3CX quirks and timing data from M001's `M001-SUMMARY.md` will sharpen the success criteria here. Do NOT pass to `gsd headless new-milestone` until M001 S07 is signed off and this file is promoted from `M002-DRAFT.md` to `M002-SPEC.md`.
+> **Draft.** Refine after M001 closes — concrete per-provider quirks (MessageNet, generic, 3CX) and timing data from M001's `M001-SUMMARY.md` will sharpen the success criteria here. Do NOT pass to `gsd headless new-milestone` until M001 S07 is signed off and this file is promoted from `M002-DRAFT.md` to `M002-SPEC.md`.
 
 ---
 
 ## 1. Milestone vision
 
-Wire the M001 SIP+media foundation to the AI brain. By the end of M002:
+Wire the M001 SIP+media foundation to the AI brain. M002 inherits M001's provider-agnostic SIP UA and `internal/sipprov/` layer — **everything below works identically whether the registrar is MessageNet, Asterisk, or 3CX.** No provider branching in the conversation loop, STT, LLM, or TTS code. By the end of M002:
 
-1. An inbound call to the registered extension is answered.
+1. An inbound call to the registered extension/DID is answered (provider transparent).
 2. Caller speech is captured, voice-activity-detected, sent to Whisper (or another STT provider via config), transcribed.
 3. Transcript is sent to Claude (default = direct Anthropic SDK; optional = HTTP to `claude-api-server`), session ID maintained across turns.
 4. Claude's reply is sent to ElevenLabs TTS, audio streamed back to caller over RTP.
@@ -101,7 +101,7 @@ These are flagged for Stefan to decide between M001 close and M002 start:
 
 ## 7. Notes for whoever promotes this draft
 
-1. After M001 S07 close, re-read `M001-SUMMARY.md` and integrate every 3CX quirk discovered into M002's slices as test cases.
+1. After M001 S07 close, re-read `M001-SUMMARY.md` and integrate every per-provider quirk (MessageNet, generic, 3CX) discovered into M002's slices as test cases. M002 itself adds no provider-specific code — but the AI loop must be tested across all three providers to catch any unintended coupling.
 2. Update Section 2 success criteria with **measured** numbers from M001's Pi 5 benchmark (not the "≤ 2.5 s" placeholder).
 3. Resolve every open question in Section 5 by either asking Stefan or recording the answer in `DECISIONS.md`.
 4. Rename file to `M002-SPEC.md` then run `gsd headless new-milestone --context M002-SPEC.md`.

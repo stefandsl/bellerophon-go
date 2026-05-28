@@ -6,24 +6,25 @@
 
 ## 1. Milestone vision
 
-Build the SIP signalling and RTP media foundation of the Go binary. By the end of M001, `bellerophon` (the binary) can:
+Build the SIP signalling and RTP media foundation of the Go binary. **The UA must be provider-agnostic** — sipgo is generic by design, and the surrounding code must match. M001 validates against three distinct SIP backends so a provider quirk doesn't leak into the core. By the end of M001, `bellerophon` (the binary) can:
 
-1. Read `config.yaml`, register itself as a SIP extension on the live 3CX instance.
-2. Accept an inbound INVITE from a real soft-phone (Linphone / 3CX mobile app calling the registered extension).
+1. Read `config.yaml`, register itself as a SIP UA against **any of:** the MessageNet DID provider (SIP trunk delivering inbound Italian DIDs — not a PBX), a generic SIP registrar / self-hosted PBX (Asterisk in CI), and the legacy 3CX hosted PBX. Provider selection is config-driven (`sip.provider: "messagenet" | "generic" | "3cx" | …`).
+2. Accept an inbound INVITE from a real soft-phone or PSTN caller (via MessageNet DID, Linphone over generic SIP, or 3CX extension).
 3. Negotiate SDP with `PCMU,PCMA`, `a=ptime:20`.
 4. Receive RTP from the caller and either **(a)** echo it back (M001 S04 demo) or **(b)** play a pre-recorded WAV file as a response (M001 S05 demo).
 5. Detect DTMF (RFC 2833) and log digits.
 6. Hang up cleanly on BYE.
-7. No AI involvement at all (Whisper/Claude/ElevenLabs land in M002).
+7. Extract the called DID from the inbound INVITE `To:` URI and surface it on the `Call` struct (provider-specific normalization in `internal/sipprov/`). No routing logic yet — that lands in M003 with multi-extension.
+8. No AI involvement at all (Whisper/Claude/ElevenLabs land in M002).
 
-This is the load-bearing slab. If the SIP+RTP layer is wobbly, every downstream milestone collapses. We over-invest in tests here.
+This is the load-bearing slab. If the SIP+RTP layer is wobbly, every downstream milestone collapses. We over-invest in tests here, and we over-test across providers specifically — a 3CX-only validation would let us ship a 3CX-coupled "generic" UA by accident.
 
 ## 2. Success criteria (observable, measurable)
 
 A reviewer agent must be able to verify these without re-reading the code:
 
-1. **Register/Unregister:** Binary REGISTERs to 3CX on startup; logs `[sip] registered as ${SIP_EXTENSION}@${SIP_DOMAIN}`. On SIGINT, sends `REGISTER` with `Expires: 0` and exits clean. 3CX admin GUI shows the extension as offline within 5 s.
-2. **Inbound INVITE:** A real call from a Linphone client (or another 3CX extension) to the bellerophon-registered extension is accepted, 200 OK sent, ACK received, RTP starts within 200 ms of ACK.
+1. **Register/Unregister (provider-agnostic):** Binary REGISTERs to the configured registrar on startup; logs `[sip] registered as ${SIP_EXTENSION}@${SIP_DOMAIN} via provider=${provider}`. On SIGINT, sends `REGISTER` with `Expires: 0` and exits clean. Validation runs against MessageNet, Asterisk (generic), **and** 3CX — same Go code, three configs, all three show the UA offline within 5 s of SIGINT.
+2. **Inbound INVITE:** A real call to the bellerophon-registered extension/DID is accepted, 200 OK sent, ACK received, RTP starts within 200 ms of ACK. Test sources: PSTN call hitting a MessageNet DID, Linphone over generic Asterisk, and a 3CX extension-to-extension call. The called DID/extension is surfaced on `Call.LocalDID` regardless of provider.
 3. **Echo demo (S04 UAT):** Caller speaks "hello, this is a test"; the binary plays back the same audio after a 500 ms delay. No clicks, no warble — RMS deviation between input and echoed output (after delay-align) < 10 %.
 4. **WAV playback (S05 UAT):** Caller is greeted by `voice-app/static/ready-beep.wav` followed by a TTS-generated WAV ("hello world, you have reached bellerophon"). Audio is clear, no codec artifacts beyond what G.711 inherently does.
 5. **DTMF (S06 UAT):** Caller presses `1`, `2`, `3`, `*`, `#` on the keypad. Binary logs `[dtmf] received: 1`, `2`, `3`, `*`, `#` within 200 ms of each press. ≥ 99 % accuracy over 100 keypresses in a scripted test.
@@ -48,7 +49,11 @@ A reviewer agent must be able to verify these without re-reading the code:
 
 | Path | Why |
 |------|-----|
-| `voice-app/lib/sip-handler.js` (401 LOC) | Today's drachtio inbound INVITE handler. Source of truth for "what 3CX expects". |
+| `voice-app/lib/sip-handler.js` (401 LOC) | Today's drachtio inbound INVITE handler. Source of truth for the cross-provider behavior. |
+| `voice-app/lib/sip-providers/{3cx,messagenet,generic}.js` | **Pluggable provider layer that already exists in the Node stack.** The Go `internal/sipprov/` package ports these one-for-one. Do not re-derive — read each file and replicate its quirks. |
+| `voice-app/lib/sip-providers/probe.js` | Auto-detect provider when not configured. M001 doesn't ship auto-detect (config explicit) but defines the data the auto-probe would need. |
+| `voice-app/lib/db/sip-trunks.js` + `voice-app/migrations/002_sip_trunks.sql` | Trunk credentials schema. M001 doesn't wire the UI but the Go SQLite layer must match this schema in M003. |
+| `voice-app/static/admin/sip-trunks.{js,css}` | Trunk admin UI. Read-only reference for M001 — served unchanged from `embed.FS` in M003. |
 | `voice-app/lib/multi-registrar.js` (225 LOC) | Today's registration logic. Only single-extension portion is M001 scope. |
 | `voice-app/lib/audio-fork.js` (416 LOC) | FreeSWITCH→voice-app PCM stream. Shows the PCM16k 16 kHz mono format we must produce as STT input. |
 | `voice-app/lib/drachtio-patch.js` | Wire-protocol crash workaround. The drachtio bug we patched there will NOT exist in sipgo, but the *behavior we depended on* matters. |
@@ -103,18 +108,22 @@ Tasks:
 - T04 validation + helpful errors
 - T05 tests
 
-### S03 — SIP UA: REGISTER + INVITE handler (sipgo)
-**Goal:** Binary registers to 3CX as a SIP extension; accepts inbound INVITE; sends 100/180/200 OK; receives ACK; on BYE, sends 200 OK and tears down. No media yet — `200 OK` advertises a fake SDP, RTP slice closes the loop in S04.
-**Demo:** `bellerophon` registered, soft-phone calls it, hears nothing but sees the call connect and then hang up cleanly when the user presses end.
+### S03 — SIP UA: REGISTER + INVITE handler (sipgo) + provider layer
+**Goal:** Binary registers as a SIP UA against the configured provider; accepts inbound INVITE; sends 100/180/200 OK; receives ACK; on BYE, sends 200 OK and tears down. No media yet — `200 OK` advertises a fake SDP, RTP slice closes the loop in S04. Provider quirks live in `internal/sipprov/`.
+**Demo:** `bellerophon --config config.messagenet.yaml` registered, PSTN call to the DID rings the UA. Repeat with `config.asterisk.yaml` and `config.3cx.yaml` — same binary, three configs, three providers.
+
+> **Implementation status note (2026-05-27):** S03's sipua-only scope already shipped (commits `a43e265`, `a4d4400`). The `internal/sipprov/` package is the **retroactive** addition this de-3CX edit calls for. Treat it as **S03 cleanup** (not blocker) to be implemented before S07 multi-provider UAT — see `docs/DECISIONS.md` for the deferral record.
 
 Must-haves:
-- `internal/sipua/Server` wraps sipgo's `Server`/`Client`.
-- `Register(ctx, expiry) error` performs initial REGISTER + auto-refresh at 50 % of expiry. Handles 401 with auth.
-- `OnInvite(handler InviteHandler)` registers a callback. Handler receives a `Call` struct with `From`, `To`, `CallID`, `RemoteSDP`, `Reply(code int, sdp string) error`, `OnBye(func())`.
-- Auto-handles re-REGISTER, OPTIONS keepalives.
+- `internal/sipua/Server` wraps sipgo's `Server`/`Client`. Provider-agnostic.
+- `internal/sipprov/Provider` interface: `RegisterHeaders() http.Header`, `NormalizeInboundDID(toURI) Call.LocalDID`, `OptionsKeepaliveInterval() time.Duration`, `RewriteContactForRegister(c *Contact)`. Concrete impls: `generic`, `messagenet`, `3cx` (Asterisk uses `generic`).
+- Provider selection: `config.sip.provider` (default `generic`).
+- `Register(ctx, expiry) error` performs initial REGISTER + auto-refresh at 50 % of expiry. Handles 401 with auth. Honors provider's `RegisterHeaders()` and `RewriteContactForRegister()`.
+- `OnInvite(handler InviteHandler)` registers a callback. Handler receives a `Call` struct with `From`, `To`, `LocalDID` (normalized via provider), `CallID`, `RemoteSDP`, `Reply(code int, sdp string) error`, `OnBye(func())`.
+- Auto-handles re-REGISTER, OPTIONS keepalives (interval per provider).
 - Graceful shutdown: SIGINT → unregister (REGISTER w/ Expires:0) → wait 2 s → exit.
-- Integration test against a `dockerized` opensips or against a real 3CX (gated by `BELLEROPHON_LIVE_3CX=1` env).
-- Logs every state transition at INFO.
+- Integration test matrix: dockerized Asterisk (always-on), MessageNet (gated by `BELLEROPHON_LIVE_MESSAGENET=1`), 3CX (gated by `BELLEROPHON_LIVE_3CX=1`).
+- Logs every state transition at INFO with `provider=` field.
 
 Tasks:
 - T01 sipgo dependency + Server bootstrap (UDP/TCP listen on `SIP_PORT`)
@@ -183,15 +192,19 @@ Tasks:
 - T04 Atomic finalize + cleanup on crash
 - T05 Tests (synthetic events + golden WAV diff)
 
-### S07 — Live 3CX integration test + UAT
-**Goal:** End-to-end manual + automated test against the live 3CX instance currently used by `voice-app`. This is the gate before M002 starts.
-**Demo:** Stefan dials the bellerophon-registered extension from his cell phone, hears the ready-beep, presses `1234#`, sees the digits logged, hangs up. Recording saved. No crashes, no stuck calls.
+### S07 — Live multi-provider integration test + UAT
+**Goal:** End-to-end manual + automated test against **all three target providers** (MessageNet, generic Asterisk, 3CX). This is the gate before M002 starts. A provider quirk caught here is cheap; one caught in M005 is expensive.
+**Demo:** Stefan dials the bellerophon-registered DID/extension on each of the three providers, hears the ready-beep, presses `1234#`, sees the digits logged, hangs up. Recording saved. No crashes, no stuck calls. Same binary used for all three runs — only the YAML config changes.
 
 Must-haves:
-- UAT script in `docs/m001-uat.md` — step-by-step manual test plan covering all 10 success criteria from Section 2.
-- Automated integration test in `test/integration/live3cx_test.go` (skipped unless `BELLEROPHON_LIVE_3CX=1`) — performs REGISTER, places echo test against a `sipp`-driven UAC, validates audio round-trip.
-- Run on Raspberry Pi 5 hardware (Stefan has one) — record results in `docs/m001-pi-benchmark.md` (boot time, register time, audio jitter, CPU at 8 concurrent calls).
-- Migration notes: document gotchas discovered (3CX-specific SDP quirks, RTP IP advertisement issues) in `M001-SUMMARY.md`.
+- UAT script in `docs/m001-uat.md` — step-by-step manual test plan covering all 10 success criteria from Section 2, with a section per provider (MessageNet, generic Asterisk, 3CX).
+- Automated integration tests:
+  - `test/integration/live_generic_test.go` (dockerized Asterisk, runs in CI by default).
+  - `test/integration/live_messagenet_test.go` (skipped unless `BELLEROPHON_LIVE_MESSAGENET=1`).
+  - `test/integration/live_3cx_test.go` (skipped unless `BELLEROPHON_LIVE_3CX=1`).
+  - All three perform REGISTER, place echo test against a `sipp`-driven UAC, validate audio round-trip.
+- Run on Raspberry Pi 5 hardware — record results in `docs/m001-pi-benchmark.md` (boot time, register time, audio jitter, CPU at 8 concurrent calls) **for each provider**.
+- Migration notes: document gotchas discovered per provider in `M001-SUMMARY.md` (per-provider sections: MessageNet quirks, 3CX quirks, generic-SIP quirks).
 
 Tasks:
 - T01 UAT manual script
@@ -221,12 +234,16 @@ Consumes from S01:
 
 S03 → S04
 Produces:
-  internal/sipua/server.go     → Server, Register, OnInvite
-  internal/sipua/call.go       → Call struct, Reply, OnBye, RemoteSDP
+  internal/sipua/server.go     → Server, Register, OnInvite (provider-agnostic)
+  internal/sipua/call.go       → Call struct (with LocalDID), Reply, OnBye, RemoteSDP
   internal/sipua/sdp.go        → ParseSDP, BuildSDP (stub for S03, real in S04)
+  internal/sipprov/provider.go → Provider interface
+  internal/sipprov/generic.go  → default impl (RFC 3261 baseline, Asterisk-compatible)
+  internal/sipprov/messagenet.go → MessageNet quirks (DID normalization, auth mode)
+  internal/sipprov/threecx.go  → 3CX quirks (Contact header, rinstance)
 
 Consumes from S02:
-  Config.SIP.* fields
+  Config.SIP.* fields, Config.SIP.Provider
 
 S04 → S05
 Produces:
@@ -267,10 +284,11 @@ Consumes from S01-S06: everything
 
 ## 7. Risks specific to M001
 
-1. **sipgo + 3CX REGISTER edge cases.** 3CX is picky about Contact header `transport=` and `;rinstance=` parameters. Mitigation: capture a packet trace from current drachtio REGISTER (`tcpdump -i any -w drachtio-register.pcap port 5060`) and replicate byte-for-byte.
-2. **RTP IP advertisement.** Current FreeSWITCH uses `--ext-rtp-ip ${EXTERNAL_IP}`. The Go binary must offer the same external IP in SDP `c=` line or 3CX SBC drops audio. Mitigation: `RTP.ExternalIP` config + auto-detect fallback (STUN to `stun.l.google.com:19302`).
-3. **Pi 5 ARM timing precision.** `time.Ticker` on Linux ARM has been known to drift under load. Mitigation: monotonic clock correction in `playback.go`; benchmark on real hardware in S07.
-4. **3CX disconnects after 10 min on idle SIP.** Today drachtio handles OPTIONS keepalive. Verify sipgo does too.
+1. **Per-provider REGISTER edge cases.** Each registrar has its own quirks. **3CX**: picky about `Contact` header `transport=` and `;rinstance=` parameters. **MessageNet**: requires `Authorization` header on the *first* REGISTER (not the typical 401-challenge dance) for some auth modes, and DIDs arrive in `To:` without `+39` country code. **Asterisk/generic**: usually permissive but sensitive to `From` `tag=` reuse on re-REGISTER. Mitigation: capture pcaps from current drachtio REGISTER against each provider (`tcpdump -i any -w ${provider}-register.pcap port 5060`) and replicate per-provider quirks in `internal/sipprov/${provider}.go`. Cross-reference today's `voice-app/lib/sip-providers/{3cx,messagenet,generic}.js`.
+2. **RTP IP advertisement.** Current FreeSWITCH uses `--ext-rtp-ip ${EXTERNAL_IP}`. The Go binary must offer the same external IP in SDP `c=` line or the upstream SBC drops audio (true for all three providers, but MessageNet is especially strict — it sends one-way audio if `c=` is a private IP). Mitigation: `RTP.ExternalIP` config + auto-detect fallback (STUN to `stun.l.google.com:19302`).
+3. **DID normalization.** MessageNet's inbound `To:` URI typically reads `<sip:0123456789@${SIP_DOMAIN}>` (no `+` prefix, no E.164 framing); 3CX gives extension numbers; generic Asterisk gives whatever the dialplan rewrites. The `internal/sipprov` layer normalizes these to E.164 + a raw form on `Call.LocalDID{E164, Raw}` so downstream code (M003 routing) doesn't branch per provider.
+4. **Pi 5 ARM timing precision.** `time.Ticker` on Linux ARM has been known to drift under load. Mitigation: monotonic clock correction in `playback.go`; benchmark on real hardware in S07.
+5. **Idle-SIP disconnects.** 3CX disconnects after 10 min idle; MessageNet sends OPTIONS pings and expects a 200; Asterisk leaves the dialog up indefinitely. Today drachtio handles OPTIONS keepalive uniformly. Verify sipgo does too and codify per-provider expectations in `sipprov`.
 
 ## 8. Hand-off checklist (when M001 closes)
 
@@ -278,11 +296,12 @@ Before tagging M001 complete and starting M002, the reviewer must confirm:
 
 - [ ] All 10 success criteria from Section 2 hit.
 - [ ] CI green on linux/amd64, linux/arm64, darwin/arm64, darwin/amd64.
-- [ ] `M001-SUMMARY.md` lists every 3CX quirk discovered with reproduction steps.
+- [ ] **All three providers (MessageNet, generic Asterisk, 3CX) pass the live REGISTER + INVITE + RTP echo test.** No provider-specific code outside `internal/sipprov/`.
+- [ ] `M001-SUMMARY.md` lists every provider quirk discovered, **grouped per provider**, with reproduction steps.
 - [ ] `docs/migration-go.md` started (just a stub — full doc lands in M006).
-- [ ] Stefan signed off on the UAT (`docs/m001-uat.md`).
+- [ ] Stefan signed off on the UAT (`docs/m001-uat.md`), with sign-off for each provider.
 - [ ] No `TODO M001` markers left in code (move to M002+ if needed).
-- [ ] Coverage: ≥ 80 % on `internal/sipua`, `internal/rtp`, `internal/codec`, `internal/media`.
+- [ ] Coverage: ≥ 80 % on `internal/sipua`, `internal/sipprov`, `internal/rtp`, `internal/codec`, `internal/media`.
 - [ ] Linter clean (`golangci-lint run` exit 0).
 
 ## 9. Notes for the GSD planner agent

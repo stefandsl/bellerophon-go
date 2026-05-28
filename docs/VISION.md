@@ -6,13 +6,14 @@
 
 ## 1. Goal in one paragraph
 
-Replace the current Node.js + drachtio + FreeSWITCH + Docker voice stack with a single statically-linked Go binary (`bellerophon`) that registers to a 3CX PBX, handles inbound/outbound SIP calls end-to-end, drives the AI conversation loop (STT → LLM → TTS), and exposes the same HTTP/WS admin surface as today's `voice-app`. A tutorial viewer must be able to run `./bellerophon --config config.yaml` on macOS/Linux/Raspberry Pi without installing Docker, Node, Python, or FreeSWITCH. Feature parity with the current `voice-app` (~13k LOC, ~70 HTTP endpoints, 4 STT providers, 2 TTS providers, multi-extension, outbound + sales + batch + recording + OpenAI Realtime bridge + 3CX extension provisioner) is non-negotiable — this is a rewrite, not an MVP.
+Replace the current Node.js + drachtio + FreeSWITCH + Docker voice stack with a single statically-linked Go binary (`bellerophon`) that registers to **any RFC 3261 SIP registrar / trunk** (MessageNet and other DID providers, self-hosted Asterisk/FreeSWITCH, 3CX, generic SIP trunks, etc.), handles inbound/outbound SIP calls end-to-end, drives the AI conversation loop (STT → LLM → TTS), and exposes the same HTTP/WS admin surface as today's `voice-app`. A tutorial viewer must be able to run `./bellerophon --config config.yaml` on macOS/Linux/Raspberry Pi without installing Docker, Node, Python, FreeSWITCH, **or any specific PBX** — point it at a SIP trunk (or a free PBX of the user's choice) and it works. 3CX is one supported provider among several, not the design target. Feature parity with the current `voice-app` (~13k LOC, ~70 HTTP endpoints, 4 STT providers, 2 TTS providers, multi-extension, outbound + sales + batch + recording + OpenAI Realtime bridge + the SIP-providers pluggable layer + optional 3CX XAPI extension provisioner) is non-negotiable — this is a rewrite, not an MVP.
 
 ## 2. Why now
 
 - Docker-on-Mac networking issues block first-run experience for tutorial viewers (`docker-compose.yml` requires `network_mode: host` + `EXTERNAL_IP` gymnastics that fail half the time on macOS).
 - Node + native modules (`better-sqlite3`, `drachtio-fsmrf`) make the Pi/ARM story painful (separate native rebuild step — see `~/.local/bin/rebuild-gsd-native.sh` for the GSD parallel).
 - FreeSWITCH is a 200 MB dependency for what is effectively "transcode G.711 ↔ PCM16k + play a WAV + capture mic". A pure-Go stack can do this in <30 MB.
+- **PBX-lock-in is a tutorial blocker.** Today the project reads as "3CX-only" even though the codebase already has a `sip-providers/{3cx,messagenet,generic}.js` pluggable layer. A viewer with a MessageNet DID or a self-hosted Asterisk box should not have to install 3CX to follow along. The rewrite is the opportunity to elevate this provider-agnostic layer in the docs and binary.
 - `sipgo` hit v1.0.0 (2025); `pion/rtp` is production-proven; the Go SIP+RTP ecosystem is finally usable without CGO.
 
 ## 3. Non-goals
@@ -28,6 +29,11 @@ Replace the current Node.js + drachtio + FreeSWITCH + Docker voice stack with a 
 ┌─────────────────────────────────────────────────────────────────┐
 │ bellerophon (single Go binary, ~25 MB stripped)                │
 │ ├── sipua/         sipgo-based SIP UA: REGISTER, INVITE, BYE   │
+│ ├── sipprov/       pluggable SIP provider layer:               │
+│ │                    generic (RFC 3261 default), messagenet,   │
+│ │                    3cx, asterisk, freeswitch-self-hosted     │
+│ │                    — DID parsing, registrar quirks, trunk    │
+│ │                    auth, From-rewrite per provider           │
 │ ├── rtp/           pion/rtp + custom jitter buffer + DTMF      │
 │ ├── codec/         G.711µ/A ↔ PCM16k (pure Go)                 │
 │ ├── media/         playback (WAV/MP3), capture, mix, record    │
@@ -38,8 +44,11 @@ Replace the current Node.js + drachtio + FreeSWITCH + Docker voice stack with a 
 │ ├── conversation/  state machine, barge-in, transcript turns   │
 │ ├── outbound/      single + sales-agent + batch dialer         │
 │ ├── admin/         ~70 HTTP endpoints + embed.FS static GUI    │
+│ │                    (includes /api/sip-trunks for the         │
+│ │                     provider-agnostic trunk-creds form)      │
 │ ├── realtime/      OpenAI Realtime WS bridge + LiveKit tokens  │
-│ ├── provisioner/   3CX XAPI client (create/update/delete ext)  │
+│ ├── provisioner/   OPTIONAL: 3CX XAPI client                   │
+│ │                  (loaded only when provider=3cx — bonus)     │
 │ ├── store/         sqlite (modernc.org/sqlite, pure-Go, embed) │
 │ │                  + optional Postgres (lib/pq) for prod       │
 │ └── config/        YAML + env var override                     │
@@ -58,12 +67,12 @@ Single binary. No CGO (verified: `sipgo`, `pion/*`, `modernc.org/sqlite`, `lib/p
 
 | ID | Title | Slices | Demoable outcome |
 |----|-------|--------|------------------|
-| **M001** | SIP + media foundation | 6-7 | Binary registers to 3CX, accepts INVITE, echoes RTP back, plays a WAV. No AI yet. |
+| **M001** | SIP + media foundation | 6-7 | Binary registers to a SIP registrar (validated against MessageNet **and** 3CX), accepts INVITE, echoes RTP back, plays a WAV. No AI yet. |
 | **M002** | Inbound AI conversation loop | 5-6 | A real inbound call gets Whisper-transcribed, prompts Claude, speaks ElevenLabs reply, supports barge-in. |
-| **M003** | Outbound + multi-extension + admin REST minimum | 6-7 | Multi-registrar works; `POST /outbound-call` places a call; ~30 read-only admin endpoints + auth equal to voice-app. |
+| **M003** | Outbound + multi-extension + admin REST minimum | 6-7 | Multi-registrar works across providers; `POST /outbound-call` places a call; ~30 read-only admin endpoints + auth equal to voice-app. SIP-trunks admin form lets the user paste credentials for any provider. |
 | **M004** | Sales-agent + batch dialer + recording | 6-7 | Sales conversation stages, encrypted recording, batch campaigns with concurrency + AMD detection. |
-| **M005** | OpenAI Realtime bridge + 3CX provisioner + Bark TTS | 4-5 | Browser ↔ Realtime works; extensions provisioned via XAPI; Bark TTS via HTTP service. |
-| **M006** | Production hardening + release pipeline | 4-5 | Cross-compiled binaries on GitHub Releases; smoke-test matrix on Pi/macOS/Linux; migration guide from Node stack. |
+| **M005** | OpenAI Realtime bridge + optional 3CX provisioner + Bark TTS | 4-5 | Browser ↔ Realtime works; **optional** 3CX-specific extension provisioning via XAPI (loaded only for 3CX users); Bark TTS via HTTP service. |
+| **M006** | Production hardening + release pipeline | 4-5 | Cross-compiled binaries on GitHub Releases; smoke-test matrix on Pi/macOS/Linux; migration guide from Node stack; provider compatibility matrix doc. |
 
 Each milestone is sized so a focused 1-2 week sprint can ship it. Total: ~2-3 months of focused work.
 
@@ -80,10 +89,13 @@ Each milestone is sized so a focused 1-2 week sprint can ship it. Total: ~2-3 mo
 
 ## 7. Hard constraints (do not break)
 
-- **3CX compatibility:** all SIP behavior validated against the live 3CX instance currently used by `voice-app`. SDP must include `a=ptime:20` and offer `PCMU,PCMA` (in that order) to match what 3CX accepts today.
+- **Provider compatibility:** the SIP UA is **provider-agnostic** — it speaks RFC 3261 + G.711 and must work against any standards-compliant registrar / trunk. Three providers are *integration-tested* at every milestone: **MessageNet** (DID provider — SIP trunk delivering inbound Italian DIDs, not a PBX), a **generic SIP registrar** (Asterisk in CI, the self-hosted-PBX case), and **3CX** (legacy compatibility — Stefan's existing hosted-PBX deployment). SDP must include `a=ptime:20` and offer `PCMU,PCMA` (in that order), which is the intersection of what all three accept.
+- **DID routing:** inbound INVITE → DID extracted from the `To:` URI (and the provider-specific quirks: MessageNet sends DIDs without `+39` country code, 3CX sometimes includes it) → routed to the matching device per `devices.json`. The `sipprov` layer is responsible for these per-provider quirks; the conversation loop never sees them.
+- **Trunk credentials UI:** the existing admin SIP-trunks form (`voice-app/static/admin/sip-trunks.{js,css}` + backing `/api/sip-trunks` endpoints + `sip_trunks` SQLite table) is the source of truth for runtime trunk config. Users add a MessageNet/generic/3CX trunk through the UI without editing files. Carry this through unchanged.
 - **Env var compatibility:** every env var listed in `voice-app/` source (run `grep -hoE "process\.env\.[A-Z_]+" voice-app/lib/**/*.js | sort -u` — there are ~60+) must either be honored verbatim or have a documented mapping in `M00x-CONTEXT.md`. No silent breakage.
 - **`devices.json` schema compatibility:** the existing `voice-app/config/devices.json` must load unchanged. The schema is the source of truth for multi-extension config.
-- **HTTP API contract compatibility:** every endpoint in the route catalog (Section 8 of `M001-SPEC.md`) keeps its path, method, request body shape, and response shape. The admin GUI is unchanged — if it breaks against the Go binary, the Go binary is wrong.
+- **HTTP API contract compatibility:** every endpoint in the route catalog (Section 8 of `M001-SPEC.md`) keeps its path, method, request body shape, and response shape — explicitly including `/api/sip-trunks*` (the provider-agnostic trunk CRUD) and `/api/extensions/3cx-credentials` (3CX-specific, kept for back-compat). The admin GUI is unchanged — if it breaks against the Go binary, the Go binary is wrong.
+- **3CX provisioner is OPTIONAL.** It loads only when a provider of type `3cx` is configured. Users on MessageNet, Asterisk, or any generic trunk never see it and the binary works without 3CX XAPI credentials.
 - **No license regression:** all new dependencies must be MIT/BSD/Apache-2.0. Reject GPL/AGPL pulls. Verify with `go-licenses` in CI.
 
 ## 8. Decisions already made (do not re-litigate)
@@ -108,8 +120,9 @@ Each milestone is sized so a focused 1-2 week sprint can ship it. Total: ~2-3 mo
 
 ## 10. Definition of done (for the whole vision)
 
-- Tutorial viewer downloads `bellerophon-${OS}-${ARCH}` from GitHub Releases, writes `config.yaml`, runs binary, places a call to their 3CX extension, has a conversation with Claude in <5 minutes from `curl -LO`.
-- All `voice-app/test/` integration tests pass against the Go binary unchanged (HTTP fixtures + WS fixtures).
+- Tutorial viewer downloads `bellerophon-${OS}-${ARCH}` from GitHub Releases, writes `config.yaml` (**or** opens the admin UI and pastes their SIP trunk credentials into the SIP-trunks form), runs the binary, places/receives a call against **a SIP trunk of their choice** (a DID provider like MessageNet, another inbound-DID SIP trunk, self-hosted Asterisk/FreeSWITCH, or 3CX), and has a conversation with Claude in <5 minutes from `curl -LO`. No specific PBX required.
+- All `voice-app/test/` integration tests pass against the Go binary unchanged (HTTP fixtures + WS fixtures + `test/sip-providers.test.js`).
+- Compatibility matrix in `docs/migration-go.md` documents at least three tested provider configurations (MessageNet DID provider, generic SIP registrar / self-hosted PBX, 3CX) with sample `config.yaml` snippets for each.
 - Current `voice-app` is retired: removed from `docker-compose.yml`, README updated, migration doc shipped (`docs/migration-go.md`).
 - M001-M006 all closed in `.gsd/` with their UAT signed.
 
