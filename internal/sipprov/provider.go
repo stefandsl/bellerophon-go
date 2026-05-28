@@ -8,9 +8,9 @@
 // Three providers ship in M001:
 //   - generic     — RFC 3261 baseline, Asterisk-compatible.
 //   - messagenet  — DID provider (messagenet.it); inbound Italian DIDs +
-//                   outbound termination over a SIP trunk. Not a PBX —
-//                   Bellerophon is the UA that answers calls to those
-//                   DIDs directly.
+//     outbound termination over a SIP trunk. Not a PBX —
+//     Bellerophon is the UA that answers calls to those
+//     DIDs directly.
 //   - 3cx         — legacy compatibility for Stefan's existing PBX.
 //
 // New providers add a file + a Get() registry case.
