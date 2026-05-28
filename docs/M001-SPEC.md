@@ -8,7 +8,7 @@
 
 Build the SIP signalling and RTP media foundation of the Go binary. **The UA must be provider-agnostic** — sipgo is generic by design, and the surrounding code must match. M001 validates against three distinct SIP backends so a provider quirk doesn't leak into the core. By the end of M001, `bellerophon` (the binary) can:
 
-1. Read `config.yaml`, register itself as a SIP UA against **any of:** MessageNet trunk (the user's ITSP for inbound DIDs), a generic SIP registrar (Asterisk in CI), and the legacy 3CX instance. Provider selection is config-driven (`sip.provider: "messagenet" | "generic" | "3cx" | …`).
+1. Read `config.yaml`, register itself as a SIP UA against **any of:** the MessageNet DID provider (SIP trunk delivering inbound Italian DIDs — not a PBX), a generic SIP registrar / self-hosted PBX (Asterisk in CI), and the legacy 3CX hosted PBX. Provider selection is config-driven (`sip.provider: "messagenet" | "generic" | "3cx" | …`).
 2. Accept an inbound INVITE from a real soft-phone or PSTN caller (via MessageNet DID, Linphone over generic SIP, or 3CX extension).
 3. Negotiate SDP with `PCMU,PCMA`, `a=ptime:20`.
 4. Receive RTP from the caller and either **(a)** echo it back (M001 S04 demo) or **(b)** play a pre-recorded WAV file as a response (M001 S05 demo).
