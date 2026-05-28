@@ -1,0 +1,30 @@
+# Minimal Asterisk for the live_generic_test.go harness.
+#
+# Brings up an Asterisk PJSIP container on host networking, configured with
+# two extensions ("100" for Bellerophon, "200" for the sipp UAC). Audio is
+# G.711 only — no transcoding, matches what the Bellerophon UA negotiates.
+#
+# Usage:
+#   docker compose -f test/integration/docker-compose.asterisk.yml up -d
+#   BELLEROPHON_ASTERISK_CONFIG=test/integration/asterisk/config.yaml \
+#     BELLEROPHON_LIVE_GENERIC=1 go test -v ./test/integration/...
+#   docker compose -f test/integration/docker-compose.asterisk.yml down
+#
+# This file is a starting point — the asterisk/ subdirectory with
+# pjsip.conf / extensions.conf is intentionally NOT included yet (lands
+# with the first real Asterisk-backed CI run; for now this is a stub the
+# operator fills in).
+
+services:
+  asterisk:
+    image: andrius/asterisk:21-current
+    container_name: bellerophon-test-asterisk
+    network_mode: host  # so SIP/RTP reaches the test binary on 127.0.0.1
+    volumes:
+      - ./asterisk:/etc/asterisk:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "asterisk -rx 'core show version' | grep -q 'Asterisk'"]
+      interval: 5s
+      timeout: 3s
+      retries: 5

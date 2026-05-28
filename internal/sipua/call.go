@@ -7,6 +7,8 @@ import (
 
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
+
+	"github.com/stefandsl/bellerophon-go/internal/sipprov"
 )
 
 // Call represents an in-flight INVITE dialog. It is delivered to the
@@ -17,6 +19,11 @@ type Call struct {
 	To        sip.Uri
 	CallID    string
 	RemoteSDP []byte
+	// LocalDID is the called identifier extracted from the To: URI and
+	// normalized through the active sipprov.Provider. The conversation
+	// loop (M002+) and the M003 multi-extension router consume
+	// LocalDID.E164; LocalDID.Raw is preserved for logging / debugging.
+	LocalDID sipprov.LocalDID
 
 	srv *Server
 	req *sip.Request
