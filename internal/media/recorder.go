@@ -110,7 +110,7 @@ func (r *Recorder) Stop() error {
 	if err != nil {
 		return fmt.Errorf("recorder: create partial: %w", err)
 	}
-	if werr := writeWAVPCM16Mono(f, mixed, r.rate); werr != nil {
+	if werr := WriteWAVPCM16Mono(f, mixed, r.rate); werr != nil {
 		_ = f.Close()
 		_ = os.Remove(r.partialPath)
 		return fmt.Errorf("recorder: write WAV: %w", werr)
@@ -177,9 +177,11 @@ func mixStreams(a, b []int16) []int16 {
 	return out
 }
 
-// writeWAVPCM16Mono emits a standard RIFF/WAVE header followed by PCM16
-// samples. Mono, signed 16-bit little-endian — the canonical "speech" format.
-func writeWAVPCM16Mono(w io.Writer, samples []int16, sampleRate int) error {
+// WriteWAVPCM16Mono emits a standard RIFF/WAVE header followed by PCM16
+// samples. Mono, signed 16-bit little-endian — the canonical "speech"
+// format used both by the recorder finalize path and the Whisper STT
+// client (which wraps PCM in WAV before posting to OpenAI).
+func WriteWAVPCM16Mono(w io.Writer, samples []int16, sampleRate int) error {
 	const channels = 1
 	const bitsPerSample = 16
 	dataSize := len(samples) * 2
