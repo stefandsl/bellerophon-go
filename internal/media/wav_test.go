@@ -3,6 +3,7 @@ package media
 import (
 	"bytes"
 	"encoding/binary"
+	"os"
 	"strings"
 	"testing"
 )
@@ -158,6 +159,34 @@ func TestReadWAV_RejectsTooManyChannels(t *testing.T) {
 	_, err := ReadWAV(bytes.NewReader(raw))
 	if err == nil {
 		t.Fatal("ReadWAV accepted 6-channel")
+	}
+}
+
+func TestReadWAVFile_RoundTripFromDisk(t *testing.T) {
+	t.Parallel()
+	samples := []int16{0, 100, -100, 32767, -32768}
+	data := make([]byte, len(samples)*2)
+	for i, s := range samples {
+		binary.LittleEndian.PutUint16(data[2*i:], uint16(s)) //nolint:gosec // int16 reinterpret
+	}
+	raw := buildWAV(t, 1, 8000, 16, data)
+
+	dir := t.TempDir()
+	path := dir + "/test.wav"
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatalf("write temp wav: %v", err)
+	}
+	got, err := ReadWAVFile(path)
+	if err != nil {
+		t.Fatalf("ReadWAVFile: %v", err)
+	}
+	if len(got.Samples) != len(samples) {
+		t.Fatalf("samples len=%d, want %d", len(got.Samples), len(samples))
+	}
+
+	// ReadWAVFile on a missing path must surface the OS error.
+	if _, err := ReadWAVFile(dir + "/nope.wav"); err == nil {
+		t.Error("ReadWAVFile on missing file: expected error")
 	}
 }
 

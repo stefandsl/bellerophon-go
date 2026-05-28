@@ -67,9 +67,9 @@ func DecodePCMU(b byte) int16 {
 	t := (mant << 3) + ulawBias
 	t <<= exp
 	if sign != 0 {
-		return int16(ulawBias - t)
+		return int16(ulawBias - t) //nolint:gosec // t bounded by µ-law range; result fits int16 by construction
 	}
-	return int16(t - ulawBias)
+	return int16(t - ulawBias) //nolint:gosec // same
 }
 
 // EncodePCMUFrame encodes len(src) PCM samples into dst as µ-law bytes.

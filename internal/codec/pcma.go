@@ -65,9 +65,9 @@ func DecodePCMA(b byte) int16 {
 		t = (mant + 0x108) << (seg - 1)
 	}
 	if b&0x80 != 0 {
-		return int16(t)
+		return int16(t) //nolint:gosec // t bounded by A-law range; max 32256 fits int16
 	}
-	return int16(-t)
+	return int16(-t) //nolint:gosec // same; -32256 fits int16
 }
 
 // EncodePCMAFrame encodes len(src) PCM samples into dst as A-law bytes.

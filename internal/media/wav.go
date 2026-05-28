@@ -137,6 +137,7 @@ func ReadWAV(r io.Reader) (*WAV, error) {
 		}
 		w.Samples = make([]int16, len(dataBytes)/2)
 		for i := range w.Samples {
+			//nolint:gosec // intentional uint16 → int16 reinterpret (two's complement)
 			w.Samples[i] = int16(binary.LittleEndian.Uint16(dataBytes[2*i:]))
 		}
 	case 8:
@@ -171,7 +172,8 @@ func (w *WAV) ToMono() *WAV {
 	for i := 0; i < pairs; i++ {
 		l := int32(w.Samples[2*i])
 		r := int32(w.Samples[2*i+1])
-		out.Samples[i] = int16((l + r) / 2)
+		out.Samples[i] = int16((l + r) / 2) //nolint:gosec // average of two int16s always fits int16
+
 	}
 	return out
 }
