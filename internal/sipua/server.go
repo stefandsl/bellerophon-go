@@ -25,6 +25,7 @@ import (
 
 	"github.com/stefandsl/bellerophon-go/internal/config"
 	bellog "github.com/stefandsl/bellerophon-go/internal/log"
+	"github.com/stefandsl/bellerophon-go/internal/sipprov"
 )
 
 // InviteHandler is invoked once per accepted inbound INVITE. It must call
@@ -43,6 +44,8 @@ type Server struct {
 	srv    *sipgo.Server
 
 	inviteHandler InviteHandler
+
+	provider sipprov.Provider
 
 	calls callTable
 
@@ -69,6 +72,9 @@ type Options struct {
 	LocalAddr string
 	// Logger is used for all transitions. Required.
 	Logger bellog.Logger
+	// Provider supplies per-registrar quirks (DID normalization, OPTIONS
+	// cadence, Contact rewrites). Nil means generic / RFC 3261 baseline.
+	Provider sipprov.Provider
 }
 
 // NewServer wires sipgo together for the given config.
@@ -108,6 +114,11 @@ func NewServer(cfg config.SIP, opts Options) (*Server, error) {
 		return nil, fmt.Errorf("sipua: new server: %w", err)
 	}
 
+	provider := opts.Provider
+	if provider == nil {
+		provider = sipprov.NewGeneric()
+	}
+
 	s := &Server{
 		cfg:         cfg,
 		local:       local,
@@ -115,6 +126,7 @@ func NewServer(cfg config.SIP, opts Options) (*Server, error) {
 		ua:          ua,
 		client:      client,
 		srv:         srv,
+		provider:    provider,
 		stopRefresh: make(chan struct{}),
 		regCallID:   randomCallID(),
 		regCSeq:     1,

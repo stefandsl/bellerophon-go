@@ -71,6 +71,12 @@ func (s *Server) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 	}
 	if t := req.To(); t != nil {
 		c.To = t.Address
+		// Surface the called DID via the active provider so downstream code
+		// never branches on which registrar delivered the call. The provider
+		// defaults to generic / pass-through when none was configured.
+		if s.provider != nil {
+			c.LocalDID = s.provider.NormalizeInboundDID(t.Address.User)
+		}
 	}
 
 	s.calls.put(callID, c)
